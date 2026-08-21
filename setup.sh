@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# qBittorrent-nox Multi-Profile AIO Installer (VueTorrent + Flood + TinyURL)
+# qBittorrent-nox Multi-Profile AIO Installer (VueTorrent + Flood + TinyURL API)
 # ==============================================================================
 
 set -e
@@ -29,6 +29,17 @@ salt_b64 = base64.b64encode(salt).decode('utf-8')
 key_b64 = base64.b64encode(key).decode('utf-8')
 print(f'@ByteArray({salt_b64}:{key_b64})')
 " "$1"
+}
+
+# Helper function to shorten URL via TinyURL API
+shorten_url() {
+    local target_url="$1"
+    local token="$2"
+    curl -s -X POST "https://api.tinyurl.com/create" \
+         -H "Authorization: Bearer ${token}" \
+         -H "Content-Type: application/json" \
+         -d "{\"url\":\"${target_url}\"}" | \
+    python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('data', {}).get('tiny_url', ''))" 2>/dev/null
 }
 
 # 1. Dependency Checks & Process Cleanup
@@ -91,9 +102,6 @@ fi
 read -p "Enter Web UI Port for Profile 1 ($USER1_NAME) [default: 8080]: " USER1_PORT
 USER1_PORT=${USER1_PORT:-8080}
 
-read -p "Enter custom TinyURL alias for Profile 1 [default: $(echo $USER1_NAME | tr '[:upper:]' '[:lower:]')-qb]: " ALIAS1
-ALIAS1=${ALIAS1:-"$(echo $USER1_NAME | tr '[:upper:]' '[:lower:]')-qb"}
-
 read -p "Enter Download Path for Profile 1 ($USER1_NAME) [default: $HOME/Downloads/$USER1_NAME]: " USER1_DIR
 USER1_DIR=${USER1_DIR:-$HOME/Downloads/$USER1_NAME}
 
@@ -116,9 +124,6 @@ USER2_PORT=${USER2_PORT:-8090}
 
 read -p "Enter Flood Web UI Port for Profile 2 ($USER2_NAME) [default: 3000]: " FLOOD_PORT
 FLOOD_PORT=${FLOOD_PORT:-3000}
-
-read -p "Enter custom TinyURL alias for Profile 2 [default: $(echo $USER2_NAME | tr '[:upper:]' '[:lower:]')-qb]: " ALIAS2
-ALIAS2=${ALIAS2:-"$(echo $USER2_NAME | tr '[:upper:]' '[:lower:]')-qb"}
 
 read -p "Enter Download Path for Profile 2 ($USER2_NAME) [default: $HOME/Downloads/$USER2_NAME]: " USER2_DIR
 USER2_DIR=${USER2_DIR:-$HOME/Downloads/$USER2_NAME}
@@ -172,7 +177,7 @@ WebUI\UseUPnP=false
 BitTorrent\Session\Port=6882
 EOF
 
-# Create Baked-in Systemd Runner Script for Profile 1 (Private - TinyURL Sync)
+# Create Baked-in Systemd Runner Script for Profile 1 (Private - TinyURL Generator)
 cat <<EOF > "$CONF_DIR1/run_service.sh"
 #!/usr/bin/env bash
 
@@ -185,43 +190,29 @@ rm -f "$CONF_DIR1/tunnel.log"
 cloudflared tunnel --url "http://localhost:$USER1_PORT" > "$CONF_DIR1/tunnel.log" 2>&1 &
 CF_PID=\$!
 
-# Initial Sync to TinyURL API
+# Initial Sync to TinyURL API (Generates TinyURL for Quick Tunnel)
 for i in {1..20}; do
     if grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR1/tunnel.log" >/dev/null 2>&1; then
         TUNNEL_URL=\$(grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR1/tunnel.log" | head -n 1)
         
-        # Create or Update TinyURL Alias
-        curl -s -X POST "https://api.tinyurl.com/create" \
+        SHORT_URL=\$(curl -s -X POST "https://api.tinyurl.com/create" \
              -H "Authorization: Bearer ${TINYURL_TOKEN}" \
              -H "Content-Type: application/json" \
-             -d "{\"url\":\"\${TUNNEL_URL}\",\"domain\":\"tinyurl.com\",\"alias\":\"${ALIAS1}\"}" >/dev/null || \
-        curl -s -X PATCH "https://api.tinyurl.com/update" \
-             -H "Authorization: Bearer ${TINYURL_TOKEN}" \
-             -H "Content-Type: application/json" \
-             -d "{\"url\":\"\${TUNNEL_URL}\",\"domain\":\"tinyurl.com\",\"alias\":\"${ALIAS1}\"}" >/dev/null
+             -d "{\"url\":\"\${TUNNEL_URL}\"}" | \
+             python3 -c "import sys, json; print(json.load(sys.stdin).get('data', {}).get('tiny_url', ''))" 2>/dev/null)
+        
+        if [ -n "\$SHORT_URL" ]; then
+            echo "\$SHORT_URL" > "$CONF_DIR1/current_tinyurl.txt"
+        fi
         break
     fi
     sleep 1
 done
 
-# Periodic Health Check Loop (Re-syncs TinyURL every 5 minutes)
-(
-    while kill -0 \$CF_PID 2>/dev/null; do
-        sleep 300
-        if grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR1/tunnel.log" >/dev/null 2>&1; then
-            CURR_URL=\$(grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR1/tunnel.log" | head -n 1)
-            curl -s -X PATCH "https://api.tinyurl.com/update" \
-                 -H "Authorization: Bearer ${TINYURL_TOKEN}" \
-                 -H "Content-Type: application/json" \
-                 -d "{\"url\":\"\${CURR_URL}\",\"domain\":\"tinyurl.com\",\"alias\":\"${ALIAS1}\"}" >/dev/null
-        fi
-    done
-) &
-
 wait \$QB_PID \$CF_PID
 EOF
 
-# Create Baked-in Systemd Runner Script for Profile 2 (Public - TinyURL Sync)
+# Create Baked-in Systemd Runner Script for Profile 2 (Public - TinyURL Generator)
 cat <<EOF > "$CONF_DIR2/run_service.sh"
 #!/usr/bin/env bash
 
@@ -240,38 +231,24 @@ rm -f "$CONF_DIR2/tunnel.log"
 cloudflared tunnel --url "http://localhost:$FLOOD_PORT" > "$CONF_DIR2/tunnel.log" 2>&1 &
 CF_PID=\$!
 
-# Initial Sync to TinyURL API
+# Initial Sync to TinyURL API (Generates TinyURL for Quick Tunnel)
 for i in {1..20}; do
     if grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR2/tunnel.log" >/dev/null 2>&1; then
         TUNNEL_URL=\$(grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR2/tunnel.log" | head -n 1)
         
-        # Create or Update TinyURL Alias
-        curl -s -X POST "https://api.tinyurl.com/create" \
+        SHORT_URL=\$(curl -s -X POST "https://api.tinyurl.com/create" \
              -H "Authorization: Bearer ${TINYURL_TOKEN}" \
              -H "Content-Type: application/json" \
-             -d "{\"url\":\"\${TUNNEL_URL}\",\"domain\":\"tinyurl.com\",\"alias\":\"${ALIAS2}\"}" >/dev/null || \
-        curl -s -X PATCH "https://api.tinyurl.com/update" \
-             -H "Authorization: Bearer ${TINYURL_TOKEN}" \
-             -H "Content-Type: application/json" \
-             -d "{\"url\":\"\${TUNNEL_URL}\",\"domain\":\"tinyurl.com\",\"alias\":\"${ALIAS2}\"}" >/dev/null
+             -d "{\"url\":\"\${TUNNEL_URL}\"}" | \
+             python3 -c "import sys, json; print(json.load(sys.stdin).get('data', {}).get('tiny_url', ''))" 2>/dev/null)
+        
+        if [ -n "\$SHORT_URL" ]; then
+            echo "\$SHORT_URL" > "$CONF_DIR2/current_tinyurl.txt"
+        fi
         break
     fi
     sleep 1
 done
-
-# Periodic Health Check Loop (Re-syncs TinyURL every 5 minutes)
-(
-    while kill -0 \$CF_PID 2>/dev/null; do
-        sleep 300
-        if grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR2/tunnel.log" >/dev/null 2>&1; then
-            CURR_URL=\$(grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR2/tunnel.log" | head -n 1)
-            curl -s -X PATCH "https://api.tinyurl.com/update" \
-                 -H "Authorization: Bearer ${TINYURL_TOKEN}" \
-                 -H "Content-Type: application/json" \
-                 -d "{\"url\":\"\${CURR_URL}\",\"domain\":\"tinyurl.com\",\"alias\":\"${ALIAS2}\"}" >/dev/null
-        fi
-    done
-) &
 
 wait \$QB_PID \$FLOOD_PID \$CF_PID
 EOF
@@ -287,7 +264,7 @@ SERVICE_PATH2="/etc/systemd/system/qbittorrent-$USER2_NAME.service"
 
 sudo bash -c "cat <<EOF > $SERVICE_PATH1
 [Unit]
-Description=qBittorrent-nox ($USER1_NAME - VueTorrent) with TinyURL Auto-Sync
+Description=qBittorrent-nox ($USER1_NAME - VueTorrent) with TinyURL Generator
 After=network-online.target
 Wants=network-online.target
 
@@ -303,7 +280,7 @@ EOF"
 
 sudo bash -c "cat <<EOF > $SERVICE_PATH2
 [Unit]
-Description=qBittorrent-nox ($USER2_NAME - Flood UI) with TinyURL Auto-Sync
+Description=qBittorrent-nox ($USER2_NAME - Flood UI) with TinyURL Generator
 After=network-online.target
 Wants=network-online.target
 
@@ -322,9 +299,9 @@ sudo systemctl enable --now "qbittorrent-$USER1_NAME"
 sudo systemctl enable --now "qbittorrent-$USER2_NAME"
 
 echo -e "\n${GREEN}${BOLD}======================================================================${RESET}"
-echo -e "${GREEN}${BOLD}                Installation Complete! (TinyURL Sync)                 ${RESET}"
+echo -e "${GREEN}${BOLD}                Installation Complete!                                ${RESET}"
 echo -e "${GREEN}${BOLD}======================================================================${RESET}"
-echo -e "Your Custom TinyURL Links:"
-echo -e "  🔒 $(echo $USER1_NAME - VueTorrent): ${CYAN}https://tinyurl.com/${ALIAS1}${RESET}"
-echo -e "  🌐 $(echo $USER2_NAME - Flood UI):  ${CYAN}https://tinyurl.com/${ALIAS2}${RESET}"
+echo -e "TinyURL links will be saved on launch to:"
+echo -e "  🔒 $CONF_DIR1/current_tinyurl.txt"
+echo -e "  🌐 $CONF_DIR2/current_tinyurl.txt"
 echo ""
