@@ -155,7 +155,7 @@ WebUI\UseUPnP=false
 BitTorrent\Session\Port=6882
 EOF
 
-# Create Baked-in Systemd Runner Script for Profile 1 (Private - VueTorrent)
+# Create Baked-in Systemd Runner Script for Profile 1 (Private - VueTorrent + Firefox Nightly)
 cat <<EOF > "$CONF_DIR1/run_service.sh"
 #!/usr/bin/env bash
 
@@ -168,11 +168,18 @@ rm -f "$CONF_DIR1/tunnel.log"
 cloudflared tunnel --url "http://localhost:$USER1_PORT" > "$CONF_DIR1/tunnel.log" 2>&1 &
 CF_PID=\$!
 
-# Initial Sync on Boot/Start
+# Initial Sync & Open Browser (Firefox Nightly)
 for i in {1..20}; do
     if grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR1/tunnel.log" >/dev/null 2>&1; then
         TUNNEL_URL=\$(grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR1/tunnel.log" | head -n 1)
         curl -s "${WORKER_URL}/set?secret=${SECRET_KEY}&user=$(echo $USER1_NAME | tr '[:upper:]' '[:lower:]')&url=\${TUNNEL_URL}" >/dev/null
+        
+        # Open Private Profile in Firefox Nightly
+        if command -v firefoxnightly >/dev/null 2>&1; then
+            firefoxnightly "\${TUNNEL_URL}" >/dev/null 2>&1 &
+        elif command -v firefox-nightly >/dev/null 2>&1; then
+            firefox-nightly "\${TUNNEL_URL}" >/dev/null 2>&1 &
+        fi
         break
     fi
     sleep 1
@@ -192,7 +199,7 @@ done
 wait \$QB_PID \$CF_PID
 EOF
 
-# Create Baked-in Systemd Runner Script for Profile 2 (Public - Flood UI)
+# Create Baked-in Systemd Runner Script for Profile 2 (Public - Flood UI + LibreWolf)
 cat <<EOF > "$CONF_DIR2/run_service.sh"
 #!/usr/bin/env bash
 
@@ -211,11 +218,16 @@ rm -f "$CONF_DIR2/tunnel.log"
 cloudflared tunnel --url "http://localhost:$FLOOD_PORT" > "$CONF_DIR2/tunnel.log" 2>&1 &
 CF_PID=\$!
 
-# Initial Sync on Boot/Start
+# Initial Sync & Open Browser (LibreWolf)
 for i in {1..20}; do
     if grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR2/tunnel.log" >/dev/null 2>&1; then
         TUNNEL_URL=\$(grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR2/tunnel.log" | head -n 1)
         curl -s "${WORKER_URL}/set?secret=${SECRET_KEY}&user=$(echo $USER2_NAME | tr '[:upper:]' '[:lower:]')&url=\${TUNNEL_URL}" >/dev/null
+        
+        # Open Public Profile in LibreWolf
+        if command -v librewolf >/dev/null 2>&1; then
+            librewolf "\${TUNNEL_URL}" >/dev/null 2>&1 &
+        fi
         break
     fi
     sleep 1
@@ -284,6 +296,6 @@ echo -e "\n${GREEN}${BOLD}======================================================
 echo -e "${GREEN}${BOLD}                Installation Complete! (AIO)                          ${RESET}"
 echo -e "${GREEN}${BOLD}======================================================================${RESET}"
 echo -e "Permanent Worker URLs:"
-echo -e "  🔒 $(echo $USER1_NAME - VueTorrent): ${CYAN}${WORKER_URL}/$(echo $USER1_NAME | tr '[:upper:]' '[:lower:]')${RESET}"
-echo -e "  🌐 $(echo $USER2_NAME - Flood UI):  ${CYAN}${WORKER_URL}/$(echo $USER2_NAME | tr '[:upper:]' '[:lower:]')${RESET}"
+echo -e "  🔒 $(echo $USER1_NAME - VueTorrent): ${CYAN}${WORKER_URL}/$(echo $USER1_NAME | tr '[:upper:]' '[:lower:]')${RESET} (Browser: Firefox Nightly)"
+echo -e "  🌐 $(echo $USER2_NAME - Flood UI):  ${CYAN}${WORKER_URL}/$(echo $USER2_NAME | tr '[:upper:]' '[:lower:]')${RESET} (Browser: LibreWolf)"
 echo ""
