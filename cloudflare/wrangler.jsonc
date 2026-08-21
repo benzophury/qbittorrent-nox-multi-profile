@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "qbittorrent-router",
+  "main": "worker-router.js",
+  "compatibility_date": "2026-08-20",
+
+  // Optional: Uncomment and set your KV Namespace ID if using worker-kv-redirect.js
+  // "kv_namespaces": [
+  //   {
+  //     "binding": "QB_KV",
+  //     "id": "YOUR_KV_NAMESPACE_ID"
+  //   }
+  // ]
+}

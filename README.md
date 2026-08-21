@@ -1,6 +1,6 @@
-# qBittorrent-nox Multi-Profile & Cloudflare Tunnel Installer
+# qBittorrent-nox Multi-Profile & Cloudflare Setup Installer
 
-An automated, interactive installer to set up **multiple isolated qBittorrent-nox instances** (profiles) on Linux, complete with **systemd background services** and **Cloudflare Tunnel / Worker routing templates**.
+An automated, interactive installer to set up **multiple isolated qBittorrent-nox instances** (profiles) on Linux, complete with **systemd background services** and **Cloudflare Worker 302 Redirectors** (Streamix pattern).
 
 ---
 
@@ -9,7 +9,7 @@ An automated, interactive installer to set up **multiple isolated qBittorrent-no
 - **Multi-Profile Isolation**: Run 2 or more independent `qbittorrent-nox` instances with separate logins, WebUI ports, peer ports, download directories, and torrent lists.
 - **Interactive Terminal Installer (`setup.sh`)**: One-command interactive setup prompting for custom ports, usernames, and download locations.
 - **Automated Systemd Services**: Creates, enables, and manages `qbittorrent-user1.service` and `qbittorrent-user2.service` automatically.
-- **Cloudflare Ready**: Includes Cloudflare Tunnel ingress configs (`cloudflared-ingress-config.yml`) and Cloudflare Worker routing script (`cloudflare/worker-router.js`) for secure remote access without opening router ports.
+- **Streamix Worker Pattern (302 Redirector)**: Uses a free Cloudflare Worker + KV store to map permanent Worker URLs (`https://qb.workers.dev/user1`) to dynamic `trycloudflare.com` tunnels without exposing bandwidth to Cloudflare or buying a custom domain!
 
 ---
 
@@ -24,16 +24,32 @@ chmod +x setup.sh
 
 ---
 
-## How It Works
-
-`qbittorrent-nox` natively supports the `--profile` flag to isolate settings and sessions.
+## Architecture: Streamix Worker 302 Redirect Pattern
 
 ```
-[ Internet User 1 ] ---> user1-qb.yourdomain.com ---> [ Cloudflare Tunnel ] ---> localhost:8080 (Profile 1)
-[ Internet User 2 ] ---> user2-qb.yourdomain.com ---> [ Cloudflare Tunnel ] ---> localhost:8081 (Profile 2)
+┌────────────────────────────────────────────────────────┐
+│ Runner System (Linux Host)                             │
+│  - qBittorrent Instance 1 (:8080) -> Quick Tunnel 1   │
+│  - qBittorrent Instance 2 (:8081) -> Quick Tunnel 2   │
+└───────────────────────────┬────────────────────────────┘
+                            │ (1) Auto-syncs live temporary URLs on boot
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│ Cloudflare Worker (your-worker.workers.dev)            │
+│  - Stores active TARGET_URLs in Cloudflare KV          │
+│  - Secret Key Authentication                           │
+└───────────────────────────┬────────────────────────────┘
+                            │ (2) HTTP 302 Redirect to live Quick Tunnel
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│ Web Browser / Client                                   │
+│ Access: https://your-worker.workers.dev/user1          │
+└────────────────────────────────────────────────────────┘
 ```
 
-### System Specs
+---
+
+## System Specs
 
 | Setting | Profile 1 (Default) | Profile 2 (Default) |
 | :--- | :--- | :--- |
@@ -62,14 +78,6 @@ Restart services:
 ```bash
 sudo systemctl restart qbittorrent-user1 qbittorrent-user2
 ```
-
----
-
-## Cloudflare Tunnel & Worker Setup
-
-1. **Install `cloudflared`**: Follow Cloudflare's official guide to install `cloudflared`.
-2. **Use Generated Ingress Config**: Use the generated `cloudflared-ingress-config.yml` template to route subdomains to `localhost:8080` and `localhost:8081`.
-3. **Cloudflare Access (Zero Trust)**: Protect both URLs behind Google/Email login walls via Cloudflare Zero Trust Dashboard $\rightarrow$ Access Applications.
 
 ---
 
