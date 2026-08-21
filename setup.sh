@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# qBittorrent-nox Multi-Profile & Cloudflare Worker Auto-Sync Installer (AIO)
+# qBittorrent-nox Multi-Profile AIO Installer (VueTorrent + Flood + Cloudflare)
 # ==============================================================================
 
 set -e
@@ -14,7 +14,7 @@ RESET="\033[0m"
 
 echo -e "${CYAN}${BOLD}"
 echo "======================================================================"
-echo "    qBittorrent-nox Multi-Profile & Cloudflare Worker Installer (AIO) "
+echo "    qBittorrent-nox Multi-Profile AIO Installer (VueTorrent & Flood) "
 echo "======================================================================"
 echo -e "${RESET}"
 
@@ -31,8 +31,8 @@ print(f'@ByteArray({salt_b64}:{key_b64})')
 " "$1"
 }
 
-# 1. Dependency Checks
-echo -e "\n${BOLD}Step 1: Checking Dependencies...${RESET}"
+# 1. Dependency Checks & Process Cleanup
+echo -e "\n${BOLD}Step 1: Checking Dependencies & Cleaning Up Old Instances...${RESET}"
 
 if command -v qbittorrent-nox >/dev/null 2>&1; then
     echo -e "  [${GREEN}✓${RESET}] qbittorrent-nox is installed."
@@ -47,14 +47,26 @@ else
     echo -e "  [${YELLOW}!${RESET}] cloudflared not found in standard PATH. Please ensure cloudflared is available."
 fi
 
+if command -v npm >/dev/null 2>&1 || command -v npx >/dev/null 2>&1; then
+    echo -e "  [${GREEN}✓${RESET}] Node.js / npm / npx is available for Flood."
+else
+    echo -e "  [${YELLOW}!${RESET}] Node.js / npx not found. Installing Node.js recommended for Flood."
+fi
+
+# Kill any existing qBittorrent / Flood / cloudflared instances
+echo -e "  [${YELLOW}!${RESET}] Stopping any running qBittorrent & tunnel processes..."
+pkill -9 -f qbittorrent-nox >/dev/null 2>&1 || true
+pkill -9 -f flood >/dev/null 2>&1 || true
+echo -e "  [${GREEN}✓${RESET}] Process cleanup complete."
+
 # 2. Cloudflare Worker Credentials
 echo -e "\n${BOLD}Step 2: Cloudflare Worker Sync Configuration${RESET}"
 read -p "Enter your Cloudflare Worker URL (e.g. https://your-worker.workers.dev): " WORKER_URL
 read -s -p "Enter your Worker SECRET_KEY: " SECRET_KEY
 echo ""
 
-# 3. Configure Profile 1 (Private)
-echo -e "\n${BOLD}Step 3: Profile 1 Configuration (Private Profile)${RESET}"
+# 3. Configure Profile 1 (Private Profile - VueTorrent)
+echo -e "\n${BOLD}Step 3: Profile 1 Configuration (Private - VueTorrent UI)${RESET}"
 read -p "Enter name for Profile 1 [default: Private]: " USER1_NAME
 USER1_NAME=${USER1_NAME:-Private}
 
@@ -73,8 +85,8 @@ USER1_DIR=${USER1_DIR:-$HOME/Downloads/$USER1_NAME}
 
 USER1_HASH=$(hash_password "$USER1_PASS")
 
-# 4. Configure Profile 2 (Public)
-echo -e "\n${BOLD}Step 4: Profile 2 Configuration (Public Profile)${RESET}"
+# 4. Configure Profile 2 (Public Profile - Flood)
+echo -e "\n${BOLD}Step 4: Profile 2 Configuration (Public - Flood UI)${RESET}"
 read -p "Enter name for Profile 2 [default: Public]: " USER2_NAME
 USER2_NAME=${USER2_NAME:-Public}
 
@@ -85,8 +97,11 @@ if [ -z "$USER2_PASS" ]; then
     echo -e "Generated Password for $USER2_NAME: ${CYAN}$USER2_PASS${RESET}"
 fi
 
-read -p "Enter Web UI Port for Profile 2 ($USER2_NAME) [default: 8090]: " USER2_PORT
+read -p "Enter qBittorrent API Port for Profile 2 ($USER2_NAME) [default: 8090]: " USER2_PORT
 USER2_PORT=${USER2_PORT:-8090}
+
+read -p "Enter Flood Web UI Port for Profile 2 ($USER2_NAME) [default: 3000]: " FLOOD_PORT
+FLOOD_PORT=${FLOOD_PORT:-3000}
 
 read -p "Enter Download Path for Profile 2 ($USER2_NAME) [default: $HOME/Downloads/$USER2_NAME]: " USER2_DIR
 USER2_DIR=${USER2_DIR:-$HOME/Downloads/$USER2_NAME}
@@ -102,7 +117,19 @@ mkdir -p "$CONF_DIR2/qBittorrent"
 mkdir -p "$USER1_DIR"
 mkdir -p "$USER2_DIR"
 
-# Write qBittorrent.conf for Profile 1
+# Download VueTorrent for Profile 1
+echo -e "\n${BOLD}Downloading & Installing VueTorrent Web UI...${RESET}"
+mkdir -p "$CONF_DIR1/vuetorrent"
+if command -v curl >/dev/null 2>&1 && command -v unzip >/dev/null 2>&1; then
+    curl -sL "https://github.com/VueTorrent/VueTorrent/releases/latest/download/vuetorrent.zip" -o "$CONF_DIR1/vuetorrent.zip"
+    unzip -q -o "$CONF_DIR1/vuetorrent.zip" -d "$CONF_DIR1/"
+    rm -f "$CONF_DIR1/vuetorrent.zip"
+    echo -e "  [${GREEN}✓${RESET}] VueTorrent installed to $CONF_DIR1/vuetorrent"
+else
+    echo -e "  [${YELLOW}!${RESET}] Could not auto-download VueTorrent (requires curl & unzip)."
+fi
+
+# Write qBittorrent.conf for Profile 1 (Private with VueTorrent)
 cat <<EOF > "$CONF_DIR1/qBittorrent/qBittorrent.conf"
 [Preferences]
 Downloads\SavePath=$USER1_DIR
@@ -111,10 +138,12 @@ WebUI\Username=$USER1_NAME
 WebUI\Password_PBKDF2="$USER1_HASH"
 WebUI\Port=$USER1_PORT
 WebUI\UseUPnP=false
+WebUI\AlternativeUIEnabled=true
+WebUI\RootFolder=$CONF_DIR1/vuetorrent
 BitTorrent\Session\Port=6881
 EOF
 
-# Write qBittorrent.conf for Profile 2
+# Write qBittorrent.conf for Profile 2 (Public for Flood)
 cat <<EOF > "$CONF_DIR2/qBittorrent/qBittorrent.conf"
 [Preferences]
 Downloads\SavePath=$USER2_DIR
@@ -126,7 +155,7 @@ WebUI\UseUPnP=false
 BitTorrent\Session\Port=6882
 EOF
 
-# Create Baked-in Systemd Runner Scripts with Reboot Auto-Sync & Periodic Re-Ping
+# Create Baked-in Systemd Runner Script for Profile 1 (Private - VueTorrent)
 cat <<EOF > "$CONF_DIR1/run_service.sh"
 #!/usr/bin/env bash
 
@@ -134,7 +163,7 @@ cat <<EOF > "$CONF_DIR1/run_service.sh"
 /usr/bin/qbittorrent-nox --profile="$CONF_DIR1" --webui-port=$USER1_PORT &
 QB_PID=\$!
 
-# Start cloudflared Quick Tunnel
+# Start cloudflared Quick Tunnel on VueTorrent Port
 rm -f "$CONF_DIR1/tunnel.log"
 cloudflared tunnel --url "http://localhost:$USER1_PORT" > "$CONF_DIR1/tunnel.log" 2>&1 &
 CF_PID=\$!
@@ -149,7 +178,7 @@ for i in {1..20}; do
     sleep 1
 done
 
-# Periodic Health Check Loop (Re-syncs every 5 minutes while systemd service runs)
+# Periodic Health Check Loop
 (
     while kill -0 \$CF_PID 2>/dev/null; do
         sleep 300
@@ -163,6 +192,7 @@ done
 wait \$QB_PID \$CF_PID
 EOF
 
+# Create Baked-in Systemd Runner Script for Profile 2 (Public - Flood UI)
 cat <<EOF > "$CONF_DIR2/run_service.sh"
 #!/usr/bin/env bash
 
@@ -170,9 +200,15 @@ cat <<EOF > "$CONF_DIR2/run_service.sh"
 /usr/bin/qbittorrent-nox --profile="$CONF_DIR2" --webui-port=$USER2_PORT &
 QB_PID=\$!
 
-# Start cloudflared Quick Tunnel
+sleep 2
+
+# Start Flood Web UI Server
+npx --yes flood --port $FLOOD_PORT --qbittorrent-url "http://localhost:$USER2_PORT" --qbittorrent-user "$USER2_NAME" --qbittorrent-pass "$USER2_PASS" > "$CONF_DIR2/flood.log" 2>&1 &
+FLOOD_PID=\$!
+
+# Start cloudflared Quick Tunnel pointing to Flood Web UI Port
 rm -f "$CONF_DIR2/tunnel.log"
-cloudflared tunnel --url "http://localhost:$USER2_PORT" > "$CONF_DIR2/tunnel.log" 2>&1 &
+cloudflared tunnel --url "http://localhost:$FLOOD_PORT" > "$CONF_DIR2/tunnel.log" 2>&1 &
 CF_PID=\$!
 
 # Initial Sync on Boot/Start
@@ -185,7 +221,7 @@ for i in {1..20}; do
     sleep 1
 done
 
-# Periodic Health Check Loop (Re-syncs every 5 minutes while systemd service runs)
+# Periodic Health Check Loop
 (
     while kill -0 \$CF_PID 2>/dev/null; do
         sleep 300
@@ -196,7 +232,7 @@ done
     done
 ) &
 
-wait \$QB_PID \$CF_PID
+wait \$QB_PID \$FLOOD_PID \$CF_PID
 EOF
 
 chmod +x "$CONF_DIR1/run_service.sh"
@@ -210,7 +246,7 @@ SERVICE_PATH2="/etc/systemd/system/qbittorrent-$USER2_NAME.service"
 
 sudo bash -c "cat <<EOF > $SERVICE_PATH1
 [Unit]
-Description=qBittorrent-nox ($USER1_NAME) with Cloudflare Worker Auto-Sync
+Description=qBittorrent-nox ($USER1_NAME - VueTorrent) with Cloudflare Auto-Sync
 After=network-online.target
 Wants=network-online.target
 
@@ -226,7 +262,7 @@ EOF"
 
 sudo bash -c "cat <<EOF > $SERVICE_PATH2
 [Unit]
-Description=qBittorrent-nox ($USER2_NAME) with Cloudflare Worker Auto-Sync
+Description=qBittorrent-nox ($USER2_NAME - Flood UI) with Cloudflare Auto-Sync
 After=network-online.target
 Wants=network-online.target
 
@@ -248,6 +284,6 @@ echo -e "\n${GREEN}${BOLD}======================================================
 echo -e "${GREEN}${BOLD}                Installation Complete! (AIO)                          ${RESET}"
 echo -e "${GREEN}${BOLD}======================================================================${RESET}"
 echo -e "Permanent Worker URLs:"
-echo -e "  🔒 $(echo $USER1_NAME): ${CYAN}${WORKER_URL}/$(echo $USER1_NAME | tr '[:upper:]' '[:lower:]')${RESET}"
-echo -e "  🌐 $(echo $USER2_NAME): ${CYAN}${WORKER_URL}/$(echo $USER2_NAME | tr '[:upper:]' '[:lower:]')${RESET}"
+echo -e "  🔒 $(echo $USER1_NAME - VueTorrent): ${CYAN}${WORKER_URL}/$(echo $USER1_NAME | tr '[:upper:]' '[:lower:]')${RESET}"
+echo -e "  🌐 $(echo $USER2_NAME - Flood UI):  ${CYAN}${WORKER_URL}/$(echo $USER2_NAME | tr '[:upper:]' '[:lower:]')${RESET}"
 echo ""

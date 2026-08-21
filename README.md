@@ -1,62 +1,62 @@
-# qBittorrent-nox Multi-Profile & Cloudflare Setup Installer
+# qBittorrent-nox Multi-Profile AIO Installer (VueTorrent + Flood UI)
 
-An automated, interactive installer to set up **multiple isolated qBittorrent-nox instances** (profiles) on Linux, complete with **systemd background services** and **Cloudflare Worker 302 Redirectors** (Streamix pattern).
+An automated, interactive installer to set up **multiple isolated qBittorrent-nox instances** (profiles) on Linux, featuring custom Web UIs (**VueTorrent** & **Flood UI**), **systemd background services**, and **Cloudflare Worker 302 Redirectors** (Streamix pattern).
 
 ---
 
 ## Features
 
 - **Multi-Profile Isolation**: Run 2 or more independent `qbittorrent-nox` instances (`Private` & `Public`) with separate logins, WebUI ports, peer ports, download directories, and torrent lists.
+- **Custom Dual Web UIs**:
+  - 🔒 **Private Profile**: Powered by **[VueTorrent](https://github.com/VueTorrent/VueTorrent)** (Modern Vue.js dark mode UI).
+  - 🌐 **Public Profile**: Powered by **[Flood UI](https://flood.js.org)** (Node.js & React torrent management suite).
 - **Interactive Terminal Installer (`setup.sh`)**: One-command interactive setup prompting for custom ports, usernames, passwords, and download locations.
-- **Automated Systemd Services**: Creates, enables, and manages `qbittorrent-Private.service` and `qbittorrent-Public.service` automatically.
-- **Streamix Worker Pattern (302 Redirector)**: Uses a free Cloudflare Worker + KV store to map permanent Worker URLs (`https://qb.workers.dev/public`) to dynamic `trycloudflare.com` tunnels without exposing bandwidth to Cloudflare or buying a custom domain!
+- **Automated Systemd Services**: Creates, enables, and manages `qbittorrent-Private.service` and `qbittorrent-Public.service` automatically across reboots.
+- **Streamix Worker Pattern (302 Redirector)**: Uses a free Cloudflare Worker + KV store to map permanent Worker URLs (`https://qb.workers.dev/private` and `/public`) to dynamic `trycloudflare.com` tunnels without exposing bandwidth to Cloudflare or buying a custom domain!
 
 ---
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/benzophury/qbittorrent-nox-multi-profile.git
-cd qbittorrent-nox-multi-profile
-chmod +x setup.sh
+cd ~/qbittorrent-nox-multi-profile
 ./setup.sh
 ```
 
 ---
 
-## Architecture: Streamix Worker 302 Redirect Pattern
+## Architecture
 
 ```
-┌────────────────────────────────────────────────────────┐
-│ Runner System (Linux Host)                             │
-│  - qBittorrent Private (:8080) -> Quick Tunnel 1       │
-│  - qBittorrent Public  (:8090) -> Quick Tunnel 2       │
-└───────────────────────────┬────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│ Runner System (Linux Host)                                             │
+│  - Private Profile (:8080) with VueTorrent -> Quick Tunnel 1           │
+│  - Public Profile  (:3000) with Flood UI   -> Quick Tunnel 2           │
+└───────────────────────────┬────────────────────────────────────────────┘
                             │ (1) Auto-syncs live temporary URLs on boot
                             ▼
-┌────────────────────────────────────────────────────────┐
-│ Cloudflare Worker (your-worker.workers.dev)            │
-│  - Stores active TARGET_URLs in Cloudflare KV          │
-│  - Secret Key Authentication                           │
-└───────────────────────────┬────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│ Cloudflare Worker (your-worker.workers.dev)                            │
+│  - Stores active TARGET_URLs in Cloudflare KV                          │
+│  - Secret Key Authentication                                           │
+└───────────────────────────┬────────────────────────────────────────────┘
                             │ (2) HTTP 302 Redirect to live Quick Tunnel
                             ▼
-┌────────────────────────────────────────────────────────┐
-│ Web Browser / Client                                   │
-│ Access: https://your-worker.workers.dev/public         │
-└────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│ Web Browser / Client                                                   │
+│ Access Private: https://your-worker.workers.dev/private                │
+│ Access Public:  https://your-worker.workers.dev/public                 │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## Default System Specs
 
-| Setting | Private Profile | Public Profile |
-| :--- | :--- | :--- |
-| **Web UI Port** | `8080` | `8090` |
-| **Peer Listening Port** | `6881` | `6882` |
-| **Config Directory** | `~/.config/qBittorrent-Private` | `~/.config/qBittorrent-Public` |
-| **Download Folder** | `~/Downloads/Private` | `~/Downloads/Public` |
+| Profile | Web UI Engine | Web UI Port | qBittorrent API Port | Config Directory | Systemd Service |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Private** | **VueTorrent** | `8080` | `8080` | `~/.config/qBittorrent-Private` | `qbittorrent-Private.service` |
+| **Public** | **Flood UI** | `3000` | `8090` | `~/.config/qBittorrent-Public` | `qbittorrent-Public.service` |
 
 ---
 
