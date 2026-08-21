@@ -59,10 +59,22 @@ pkill -9 -f qbittorrent-nox >/dev/null 2>&1 || true
 pkill -9 -f flood >/dev/null 2>&1 || true
 echo -e "  [${GREEN}✓${RESET}] Process cleanup complete."
 
-# 2. TinyURL API Credentials
+# 2. TinyURL API Credentials (Auto-detects ~/.tinyurl_env)
 echo -e "\n${BOLD}Step 2: TinyURL API Configuration${RESET}"
-read -s -p "Enter your TinyURL API Token: " TINYURL_TOKEN
-echo ""
+
+ENV_FILE="$HOME/.tinyurl_env"
+if [ -f "$ENV_FILE" ]; then
+    source "$ENV_FILE"
+fi
+
+TINYURL_TOKEN=${TINYURL_API_TOKEN:-${TINYURL_TOKEN:-""}}
+
+if [ -n "$TINYURL_TOKEN" ]; then
+    echo -e "  [${GREEN}✓${RESET}] Loaded TinyURL API Token from $ENV_FILE"
+else
+    read -s -p "Enter your TinyURL API Token: " TINYURL_TOKEN
+    echo ""
+fi
 
 # 3. Configure Profile 1 (Private Profile - VueTorrent)
 echo -e "\n${BOLD}Step 3: Profile 1 Configuration (Private - VueTorrent UI)${RESET}"
