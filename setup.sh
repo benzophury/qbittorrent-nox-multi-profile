@@ -312,7 +312,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$USER
-ExecStart=$CONF_DIR1/run_service.sh
+ExecStart=/usr/bin/bash $CONF_DIR1/run_service.sh
 Restart=on-failure
 
 [Install]
@@ -328,7 +328,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$USER
-ExecStart=$CONF_DIR2/run_service.sh
+ExecStart=/usr/bin/bash $CONF_DIR2/run_service.sh
 Restart=on-failure
 
 [Install]
