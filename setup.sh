@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# qBittorrent-nox Multi-Profile Setup & Cloudflare Routing Installer
+# qBittorrent-nox Multi-Profile & Cloudflare Setup Installer
 # ==============================================================================
 
 set -e
@@ -18,10 +18,18 @@ echo "    qBittorrent-nox Multi-Profile & Cloudflare Setup Installer       "
 echo "======================================================================"
 echo -e "${RESET}"
 
-# Check for root / sudo privileges
-if [ "$EUID" -ne 0 ]; then
-    echo -e "${YELLOW}[!] Note: Running as non-root. Sudo prompts will be used for systemd installations.${RESET}"
-fi
+# Helper function to hash password via Python 3 (qBittorrent PBKDF2 SHA-512)
+hash_password() {
+    python3 -c "
+import os, base64, hashlib, sys
+pw = sys.argv[1]
+salt = os.urandom(16)
+key = hashlib.pbkdf2_hmac('sha512', pw.encode('utf-8'), salt, 100000)
+salt_b64 = base64.b64encode(salt).decode('utf-8')
+key_b64 = base64.b64encode(key).decode('utf-8')
+print(f'@ByteArray({salt_b64}:{key_b64})')
+" "$1"
+}
 
 # 1. Dependency Checks
 echo -e "\n${BOLD}Step 1: Checking Dependencies...${RESET}"
@@ -33,11 +41,11 @@ else
     read -p "Would you like to install qbittorrent-nox now? (y/n): " INSTALL_QB
     if [[ "$INSTALL_QB" =~ ^[Yy]$ ]]; then
         if command -v apt >/dev/null 2>&1; then
-            sudo apt update && sudo apt install -y qbittorrent-nox
+            sudo apt update && sudo apt install -y qbittorrent-nox python3
         elif command -v dnf >/dev/null 2>&1; then
-            sudo dnf install -y qbittorrent-nox
+            sudo dnf install -y qbittorrent-nox python3
         elif command -v pacman >/dev/null 2>&1; then
-            sudo pacman -S --noconfirm qbittorrent-nox
+            sudo pacman -S --noconfirm qbittorrent-nox python3
         else
             echo -e "  [${RED}✗${RESET}] Automatic package manager installation not supported. Please install qbittorrent-nox manually."
             exit 1
@@ -48,27 +56,47 @@ else
     fi
 fi
 
-# 2. Configure Profile 1
-echo -e "\n${BOLD}Step 2: Profile 1 Configuration${RESET}"
-read -p "Enter username for Profile 1 [default: user1]: " USER1_NAME
-USER1_NAME=${USER1_NAME:-user1}
+# 2. Configure Profile 1 (Private)
+echo -e "\n${BOLD}Step 2: Profile 1 Configuration (Private Profile)${RESET}"
+read -p "Enter name for Profile 1 [default: Private]: " USER1_NAME
+USER1_NAME=${USER1_NAME:-Private}
 
-read -p "Enter Web UI Port for Profile 1 [default: 8080]: " USER1_PORT
+read -s -p "Enter Web UI password for Profile 1 ($USER1_NAME): " USER1_PASS
+echo ""
+if [ -z "$USER1_PASS" ]; then
+    echo -e "${YELLOW}No password entered. Generating random password...${RESET}"
+    USER1_PASS=$(openssl rand -base64 12)
+    echo -e "Generated Password for $USER1_NAME: ${CYAN}$USER1_PASS${RESET}"
+fi
+
+read -p "Enter Web UI Port for Profile 1 ($USER1_NAME) [default: 8080]: " USER1_PORT
 USER1_PORT=${USER1_PORT:-8080}
 
-read -p "Enter Download Path for Profile 1 [default: $HOME/Downloads/$USER1_NAME]: " USER1_DIR
+read -p "Enter Download Path for Profile 1 ($USER1_NAME) [default: $HOME/Downloads/$USER1_NAME]: " USER1_DIR
 USER1_DIR=${USER1_DIR:-$HOME/Downloads/$USER1_NAME}
 
-# 3. Configure Profile 2
-echo -e "\n${BOLD}Step 3: Profile 2 Configuration${RESET}"
-read -p "Enter username for Profile 2 [default: user2]: " USER2_NAME
-USER2_NAME=${USER2_NAME:-user2}
+USER1_HASH=$(hash_password "$USER1_PASS")
 
-read -p "Enter Web UI Port for Profile 2 [default: 8081]: " USER2_PORT
+# 3. Configure Profile 2 (Public)
+echo -e "\n${BOLD}Step 3: Profile 2 Configuration (Public Profile)${RESET}"
+read -p "Enter name for Profile 2 [default: Public]: " USER2_NAME
+USER2_NAME=${USER2_NAME:-Public}
+
+read -s -p "Enter Web UI password for Profile 2 ($USER2_NAME): " USER2_PASS
+echo ""
+if [ -z "$USER2_PASS" ]; then
+    echo -e "${YELLOW}No password entered. Generating random password...${RESET}"
+    USER2_PASS=$(openssl rand -base64 12)
+    echo -e "Generated Password for $USER2_NAME: ${CYAN}$USER2_PASS${RESET}"
+fi
+
+read -p "Enter Web UI Port for Profile 2 ($USER2_NAME) [default: 8081]: " USER2_PORT
 USER2_PORT=${USER2_PORT:-8081}
 
-read -p "Enter Download Path for Profile 2 [default: $HOME/Downloads/$USER2_NAME]: " USER2_DIR
+read -p "Enter Download Path for Profile 2 ($USER2_NAME) [default: $HOME/Downloads/$USER2_NAME]: " USER2_DIR
 USER2_DIR=${USER2_DIR:-$HOME/Downloads/$USER2_NAME}
+
+USER2_HASH=$(hash_password "$USER2_PASS")
 
 # Create Directories
 CONF_DIR1="$HOME/.config/qBittorrent-$USER1_NAME"
@@ -85,6 +113,8 @@ cat <<EOF > "$CONF_DIR1/qBittorrent/qBittorrent.conf"
 [Preferences]
 Downloads\SavePath=$USER1_DIR
 WebUI\Enabled=true
+WebUI\Username=$USER1_NAME
+WebUI\Password_PBKDF2="$USER1_HASH"
 WebUI\Port=$USER1_PORT
 WebUI\UseUPnP=false
 BitTorrent\Session\Port=6881
@@ -95,6 +125,8 @@ cat <<EOF > "$CONF_DIR2/qBittorrent/qBittorrent.conf"
 [Preferences]
 Downloads\SavePath=$USER2_DIR
 WebUI\Enabled=true
+WebUI\Username=$USER2_NAME
+WebUI\Password_PBKDF2="$USER2_HASH"
 WebUI\Port=$USER2_PORT
 WebUI\UseUPnP=false
 BitTorrent\Session\Port=6882
@@ -148,33 +180,9 @@ sudo systemctl enable --now "qbittorrent-$USER2_NAME"
 
 echo -e "  [${GREEN}✓${RESET}] Enabled and started both services!"
 
-# 5. Cloudflare Tunnel / Worker Guidance
-echo -e "\n${BOLD}Step 5: Cloudflare Setup Configuration${RESET}"
-read -p "Enter your Cloudflare Domain name (e.g. yourdomain.com) [optional]: " CF_DOMAIN
-
-if [ -n "$CF_DOMAIN" ]; then
-    cat <<EOF > cloudflared-ingress-config.yml
-# Cloudflare Tunnel Configuration Template
-tunnel: YOUR_TUNNEL_ID
-credentials-file: /home/$USER/.cloudflared/YOUR_TUNNEL_ID.json
-
-ingress:
-  - hostname: $USER1_NAME-qb.$CF_DOMAIN
-    service: http://localhost:$USER1_PORT
-  - hostname: $USER2_NAME-qb.$CF_DOMAIN
-    service: http://localhost:$USER2_PORT
-  - service: http_status:404
-EOF
-    echo -e "  [${GREEN}✓${RESET}] Generated 'cloudflared-ingress-config.yml' for $CF_DOMAIN"
-fi
-
 echo -e "\n${GREEN}${BOLD}======================================================================${RESET}"
 echo -e "${GREEN}${BOLD}                Installation Complete!                                ${RESET}"
 echo -e "${GREEN}${BOLD}======================================================================${RESET}"
-echo -e "Profile 1 ($USER1_NAME): ${CYAN}http://localhost:$USER1_PORT${RESET} (Default User: admin / Pass: check terminal logs)"
-echo -e "Profile 2 ($USER2_NAME): ${CYAN}http://localhost:$USER2_PORT${RESET} (Default User: admin / Pass: check terminal logs)"
-echo ""
-echo -e "To view service logs:"
-echo -e "  ${YELLOW}sudo journalctl -u qbittorrent-$USER1_NAME -n 20${RESET}"
-echo -e "  ${YELLOW}sudo journalctl -u qbittorrent-$USER2_NAME -n 20${RESET}"
+echo -e "Profile 1 ($USER1_NAME): ${CYAN}http://localhost:$USER1_PORT${RESET} (User: $USER1_NAME / Pass: [Set during setup])"
+echo -e "Profile 2 ($USER2_NAME): ${CYAN}http://localhost:$USER2_PORT${RESET} (User: $USER2_NAME / Pass: [Set during setup])"
 echo ""
