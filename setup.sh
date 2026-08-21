@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# qBittorrent-nox Multi-Profile & Cloudflare Worker Auto-Sync Installer
+# qBittorrent-nox Multi-Profile & Cloudflare Worker Auto-Sync Installer (AIO)
 # ==============================================================================
 
 set -e
@@ -14,7 +14,7 @@ RESET="\033[0m"
 
 echo -e "${CYAN}${BOLD}"
 echo "======================================================================"
-echo "    qBittorrent-nox Multi-Profile & Cloudflare Worker Installer      "
+echo "    qBittorrent-nox Multi-Profile & Cloudflare Worker Installer (AIO) "
 echo "======================================================================"
 echo -e "${RESET}"
 
@@ -126,16 +126,20 @@ WebUI\UseUPnP=false
 BitTorrent\Session\Port=6882
 EOF
 
-# Create Baked-in Systemd Runner Scripts
+# Create Baked-in Systemd Runner Scripts with Reboot Auto-Sync & Periodic Re-Ping
 cat <<EOF > "$CONF_DIR1/run_service.sh"
 #!/usr/bin/env bash
+
+# Start qBittorrent-nox in background
 /usr/bin/qbittorrent-nox --profile="$CONF_DIR1" --webui-port=$USER1_PORT &
 QB_PID=\$!
 
+# Start cloudflared Quick Tunnel
 rm -f "$CONF_DIR1/tunnel.log"
 cloudflared tunnel --url "http://localhost:$USER1_PORT" > "$CONF_DIR1/tunnel.log" 2>&1 &
 CF_PID=\$!
 
+# Initial Sync on Boot/Start
 for i in {1..20}; do
     if grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR1/tunnel.log" >/dev/null 2>&1; then
         TUNNEL_URL=\$(grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR1/tunnel.log" | head -n 1)
@@ -145,18 +149,33 @@ for i in {1..20}; do
     sleep 1
 done
 
+# Periodic Health Check Loop (Re-syncs every 5 minutes while systemd service runs)
+(
+    while kill -0 \$CF_PID 2>/dev/null; do
+        sleep 300
+        if grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR1/tunnel.log" >/dev/null 2>&1; then
+            CURR_URL=\$(grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR1/tunnel.log" | head -n 1)
+            curl -s "${WORKER_URL}/set?secret=${SECRET_KEY}&user=$(echo $USER1_NAME | tr '[:upper:]' '[:lower:]')&url=\${CURR_URL}" >/dev/null
+        fi
+    done
+) &
+
 wait \$QB_PID \$CF_PID
 EOF
 
 cat <<EOF > "$CONF_DIR2/run_service.sh"
 #!/usr/bin/env bash
+
+# Start qBittorrent-nox in background
 /usr/bin/qbittorrent-nox --profile="$CONF_DIR2" --webui-port=$USER2_PORT &
 QB_PID=\$!
 
+# Start cloudflared Quick Tunnel
 rm -f "$CONF_DIR2/tunnel.log"
 cloudflared tunnel --url "http://localhost:$USER2_PORT" > "$CONF_DIR2/tunnel.log" 2>&1 &
 CF_PID=\$!
 
+# Initial Sync on Boot/Start
 for i in {1..20}; do
     if grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR2/tunnel.log" >/dev/null 2>&1; then
         TUNNEL_URL=\$(grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR2/tunnel.log" | head -n 1)
@@ -165,6 +184,17 @@ for i in {1..20}; do
     fi
     sleep 1
 done
+
+# Periodic Health Check Loop (Re-syncs every 5 minutes while systemd service runs)
+(
+    while kill -0 \$CF_PID 2>/dev/null; do
+        sleep 300
+        if grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR2/tunnel.log" >/dev/null 2>&1; then
+            CURR_URL=\$(grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR2/tunnel.log" | head -n 1)
+            curl -s "${WORKER_URL}/set?secret=${SECRET_KEY}&user=$(echo $USER2_NAME | tr '[:upper:]' '[:lower:]')&url=\${CURR_URL}" >/dev/null
+        fi
+    done
+) &
 
 wait \$QB_PID \$CF_PID
 EOF
@@ -215,7 +245,7 @@ sudo systemctl enable --now "qbittorrent-$USER1_NAME"
 sudo systemctl enable --now "qbittorrent-$USER2_NAME"
 
 echo -e "\n${GREEN}${BOLD}======================================================================${RESET}"
-echo -e "${GREEN}${BOLD}                Installation Complete!                                ${RESET}"
+echo -e "${GREEN}${BOLD}                Installation Complete! (AIO)                          ${RESET}"
 echo -e "${GREEN}${BOLD}======================================================================${RESET}"
 echo -e "Permanent Worker URLs:"
 echo -e "  🔒 $(echo $USER1_NAME): ${CYAN}${WORKER_URL}/$(echo $USER1_NAME | tr '[:upper:]' '[:lower:]')${RESET}"
