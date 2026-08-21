@@ -159,6 +159,10 @@ EOF
 cat <<EOF > "$CONF_DIR1/run_service.sh"
 #!/usr/bin/env bash
 
+# Export GUI Display for Browser Launching from Systemd
+export DISPLAY=\${DISPLAY:-:0}
+export XAUTHORITY=\${XAUTHORITY:-\$HOME/.Xauthority}
+
 # Start qBittorrent-nox in background
 /usr/bin/qbittorrent-nox --profile="$CONF_DIR1" --webui-port=$USER1_PORT &
 QB_PID=\$!
@@ -202,6 +206,10 @@ EOF
 # Create Baked-in Systemd Runner Script for Profile 2 (Public - Flood UI + LibreWolf)
 cat <<EOF > "$CONF_DIR2/run_service.sh"
 #!/usr/bin/env bash
+
+# Export GUI Display for Browser Launching from Systemd
+export DISPLAY=\${DISPLAY:-:0}
+export XAUTHORITY=\${XAUTHORITY:-\$HOME/.Xauthority}
 
 # Start qBittorrent-nox in background
 /usr/bin/qbittorrent-nox --profile="$CONF_DIR2" --webui-port=$USER2_PORT &
@@ -265,6 +273,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$USER
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=$HOME/.Xauthority
 ExecStart=$CONF_DIR1/run_service.sh
 Restart=on-failure
 
@@ -281,6 +291,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$USER
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=$HOME/.Xauthority
 ExecStart=$CONF_DIR2/run_service.sh
 Restart=on-failure
 
