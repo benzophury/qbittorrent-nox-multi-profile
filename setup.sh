@@ -211,22 +211,24 @@ for i in {1..20}; do
         ALIAS_FILE="$CONF_DIR1/tinyurl_alias.txt"
         LOG_FILE="$CONF_DIR1/tinyurl_api.log"
         
+        if [ ! -f "\$ALIAS_FILE" ]; then
+            RESP=\$(curl -s -X POST "https://api.tinyurl.com/create" \
+                 -H "Authorization: Bearer \${TOKEN}" \
+                 -H "Content-Type: application/json" \
+                 -d "{\"url\":\"https://github.com\"}")
+            echo "\$RESP" > "\$LOG_FILE"
+            NEW_ALIAS=\$(echo "\$RESP" | python3 -c "import sys, json; print(json.load(sys.stdin).get('data', {}).get('alias', ''))" 2>/dev/null)
+            if [ -n "\$NEW_ALIAS" ]; then
+                echo "\$NEW_ALIAS" > "\$ALIAS_FILE"
+            fi
+        fi
+
         if [ -f "\$ALIAS_FILE" ]; then
             SAVED_ALIAS=\$(cat "\$ALIAS_FILE")
             curl -s -X PATCH "https://api.tinyurl.com/update" \
                  -H "Authorization: Bearer \${TOKEN}" \
                  -H "Content-Type: application/json" \
                  -d "{\"domain\":\"tinyurl.com\",\"alias\":\"\${SAVED_ALIAS}\",\"url\":\"\${TUNNEL_URL}\"}" > "\$LOG_FILE" 2>&1
-        else
-            RESP=\$(curl -s -X POST "https://api.tinyurl.com/create" \
-                 -H "Authorization: Bearer \${TOKEN}" \
-                 -H "Content-Type: application/json" \
-                 -d "{\"url\":\"\${TUNNEL_URL}\"}")
-            echo "\$RESP" > "\$LOG_FILE"
-            NEW_ALIAS=\$(echo "\$RESP" | python3 -c "import sys, json; print(json.load(sys.stdin).get('data', {}).get('alias', ''))" 2>/dev/null)
-            if [ -n "\$NEW_ALIAS" ]; then
-                echo "\$NEW_ALIAS" > "\$ALIAS_FILE"
-            fi
         fi
         break
     fi
@@ -287,22 +289,24 @@ for i in {1..20}; do
         ALIAS_FILE="$CONF_DIR2/tinyurl_alias.txt"
         LOG_FILE="$CONF_DIR2/tinyurl_api.log"
         
+        if [ ! -f "\$ALIAS_FILE" ]; then
+            RESP=\$(curl -s -X POST "https://api.tinyurl.com/create" \
+                 -H "Authorization: Bearer \${TOKEN}" \
+                 -H "Content-Type: application/json" \
+                 -d "{\"url\":\"https://github.com\"}")
+            echo "\$RESP" > "\$LOG_FILE"
+            NEW_ALIAS=\$(echo "\$RESP" | python3 -c "import sys, json; print(json.load(sys.stdin).get('data', {}).get('alias', ''))" 2>/dev/null)
+            if [ -n "\$NEW_ALIAS" ]; then
+                echo "\$NEW_ALIAS" > "\$ALIAS_FILE"
+            fi
+        fi
+
         if [ -f "\$ALIAS_FILE" ]; then
             SAVED_ALIAS=\$(cat "\$ALIAS_FILE")
             curl -s -X PATCH "https://api.tinyurl.com/update" \
                  -H "Authorization: Bearer \${TOKEN}" \
                  -H "Content-Type: application/json" \
                  -d "{\"domain\":\"tinyurl.com\",\"alias\":\"\${SAVED_ALIAS}\",\"url\":\"\${TUNNEL_URL}\"}" > "\$LOG_FILE" 2>&1
-        else
-            RESP=\$(curl -s -X POST "https://api.tinyurl.com/create" \
-                 -H "Authorization: Bearer \${TOKEN}" \
-                 -H "Content-Type: application/json" \
-                 -d "{\"url\":\"\${TUNNEL_URL}\"}")
-            echo "\$RESP" > "\$LOG_FILE"
-            NEW_ALIAS=\$(echo "\$RESP" | python3 -c "import sys, json; print(json.load(sys.stdin).get('data', {}).get('alias', ''))" 2>/dev/null)
-            if [ -n "\$NEW_ALIAS" ]; then
-                echo "\$NEW_ALIAS" > "\$ALIAS_FILE"
-            fi
         fi
         break
     fi
