@@ -31,41 +31,32 @@ print(f'@ByteArray({salt_b64}:{key_b64})')
 " "$1"
 }
 
-# 1. Dependency Checks & Trashing Old Config Files
-echo -e "\n${BOLD}Step 1: Trashing Old Profile Config Folders & Checking Dependencies...${RESET}"
+# 1. Dynamic Binary Path Detection & Dependency Checks
+echo -e "\n${BOLD}Step 1: Checking Dependencies & Environment...${RESET}"
+
+BASH_BIN=$(command -v bash || echo "/usr/bin/bash")
 
 if command -v qbittorrent-nox >/dev/null 2>&1; then
-    echo -e "  [${GREEN}✓${RESET}] qbittorrent-nox is installed."
+    QBT_BIN=$(command -v qbittorrent-nox)
+    echo -e "  [${GREEN}✓${RESET}] qbittorrent-nox found at $QBT_BIN"
 else
     echo -e "  [${RED}✗${RESET}] qbittorrent-nox is required. Please install it first."
     exit 1
 fi
 
 if command -v cloudflared >/dev/null 2>&1; then
-    echo -e "  [${GREEN}✓${RESET}] cloudflared is installed."
+    CF_BIN=$(command -v cloudflared)
+    echo -e "  [${GREEN}✓${RESET}] cloudflared found at $CF_BIN"
 else
-    echo -e "  [${YELLOW}!${RESET}] cloudflared not found in standard PATH. Please ensure cloudflared is available."
+    echo -e "  [${RED}✗${RESET}] cloudflared is required for Quick Tunnels. Please install cloudflared first."
+    exit 1
 fi
 
 if command -v npm >/dev/null 2>&1 || command -v npx >/dev/null 2>&1; then
-    echo -e "  [${GREEN}✓${RESET}] Node.js / npm / npx is available for Flood."
+    echo -e "  [${GREEN}✓${RESET}] Node.js / npm / npx is available for Flood UI."
 else
-    echo -e "  [${YELLOW}!${RESET}] Node.js / npx not found. Installing Node.js recommended for Flood."
+    echo -e "  [${YELLOW}!${RESET}] Node.js / npx not found. Flood UI requires npx."
 fi
-
-# Stop processes and trash old qBittorrent profile configs & systemd services
-echo -e "  [${YELLOW}!${RESET}] Stopping running instances and trashing old config folders..."
-pkill -9 -f qbittorrent-nox >/dev/null 2>&1 || true
-pkill -9 -f flood >/dev/null 2>&1 || true
-pkill -9 -f cloudflared >/dev/null 2>&1 || true
-
-rm -rf "$HOME/.config"/qBittorrent-*
-rm -rf "$HOME/.cache"/qBittorrent*
-rm -rf "$HOME/.local/share"/qBittorrent*
-sudo rm -f /etc/systemd/system/qbittorrent-*.service >/dev/null 2>&1 || true
-sudo systemctl daemon-reload >/dev/null 2>&1 || true
-
-echo -e "  [${GREEN}✓${RESET}] Old configuration folders and services trashed."
 
 # 2. TinyURL API Credentials (Auto-detects ~/.tinyurl_env)
 echo -e "\n${BOLD}Step 2: TinyURL API Configuration${RESET}"
@@ -127,10 +118,29 @@ USER2_DIR=${USER2_DIR:-$HOME/Downloads/$USER2_NAME}
 
 USER2_HASH=$(hash_password "$USER2_PASS")
 
-# Create Directories
 CONF_DIR1="$HOME/.config/qBittorrent-$USER1_NAME"
 CONF_DIR2="$HOME/.config/qBittorrent-$USER2_NAME"
 
+# 5. Targeted Cleanup of Specified Profiles
+echo -e "\n${BOLD}Step 5: Trashing Old Files for Selected Profiles...${RESET}"
+
+# Stop processes targeted by profile paths / ports
+pkill -9 -f "qbittorrent-nox --profile=$CONF_DIR1" >/dev/null 2>&1 || true
+pkill -9 -f "qbittorrent-nox --profile=$CONF_DIR2" >/dev/null 2>&1 || true
+pkill -9 -f "cloudflared tunnel --url http://localhost:$USER1_PORT" >/dev/null 2>&1 || true
+pkill -9 -f "cloudflared tunnel --url http://localhost:$FLOOD_PORT" >/dev/null 2>&1 || true
+pkill -9 -f "flood --port $FLOOD_PORT" >/dev/null 2>&1 || true
+
+# Remove old config directories for selected profiles only
+rm -rf "$CONF_DIR1" "$CONF_DIR2"
+rm -rf "$HOME/.cache/qBittorrent-$USER1_NAME" "$HOME/.cache/qBittorrent-$USER2_NAME"
+rm -rf "$HOME/.local/share/qBittorrent-$USER1_NAME" "$HOME/.local/share/qBittorrent-$USER2_NAME"
+
+# Remove systemd services for selected profiles
+sudo rm -f "/etc/systemd/system/qbittorrent-$USER1_NAME.service" "/etc/systemd/system/qbittorrent-$USER2_NAME.service" >/dev/null 2>&1 || true
+echo -e "  [${GREEN}✓${RESET}] Old configuration folders for $USER1_NAME & $USER2_NAME trashed."
+
+# Create Fresh Profile Directories
 mkdir -p "$CONF_DIR1/qBittorrent"
 mkdir -p "$CONF_DIR2/qBittorrent"
 mkdir -p "$USER1_DIR"
@@ -178,13 +188,19 @@ EOF
 cat <<EOF > "$CONF_DIR1/run_service.sh"
 #!/usr/bin/env bash
 
+# Load TinyURL token dynamically from ~/.tinyurl_env at runtime (prevents token hardcoding)
+if [ -f "\$HOME/.tinyurl_env" ]; then
+    source "\$HOME/.tinyurl_env"
+fi
+TOKEN="\${TINYURL_API_TOKEN:-\${TINYURL_TOKEN}}"
+
 # Start qBittorrent-nox in background
-/usr/bin/qbittorrent-nox --profile="$CONF_DIR1" --webui-port=$USER1_PORT &
+"$QBT_BIN" --profile="$CONF_DIR1" --webui-port=$USER1_PORT &
 QB_PID=\$!
 
 # Start cloudflared Quick Tunnel on VueTorrent Port
 rm -f "$CONF_DIR1/tunnel.log"
-cloudflared tunnel --url "http://localhost:$USER1_PORT" > "$CONF_DIR1/tunnel.log" 2>&1 &
+"$CF_BIN" tunnel --url "http://localhost:$USER1_PORT" > "$CONF_DIR1/tunnel.log" 2>&1 &
 CF_PID=\$!
 
 # Initial Sync / Update to TinyURL API
@@ -193,17 +209,20 @@ for i in {1..20}; do
         TUNNEL_URL=\$(grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR1/tunnel.log" | head -n 1)
         
         ALIAS_FILE="$CONF_DIR1/tinyurl_alias.txt"
+        LOG_FILE="$CONF_DIR1/tinyurl_api.log"
+        
         if [ -f "\$ALIAS_FILE" ]; then
             SAVED_ALIAS=\$(cat "\$ALIAS_FILE")
             curl -s -X PATCH "https://api.tinyurl.com/update" \
-                 -H "Authorization: Bearer ${TINYURL_TOKEN}" \
+                 -H "Authorization: Bearer \${TOKEN}" \
                  -H "Content-Type: application/json" \
-                 -d "{\"domain\":\"tinyurl.com\",\"alias\":\"\${SAVED_ALIAS}\",\"url\":\"\${TUNNEL_URL}\"}" >/dev/null
+                 -d "{\"domain\":\"tinyurl.com\",\"alias\":\"\${SAVED_ALIAS}\",\"url\":\"\${TUNNEL_URL}\"}" > "\$LOG_FILE" 2>&1
         else
             RESP=\$(curl -s -X POST "https://api.tinyurl.com/create" \
-                 -H "Authorization: Bearer ${TINYURL_TOKEN}" \
+                 -H "Authorization: Bearer \${TOKEN}" \
                  -H "Content-Type: application/json" \
                  -d "{\"url\":\"\${TUNNEL_URL}\"}")
+            echo "\$RESP" > "\$LOG_FILE"
             NEW_ALIAS=\$(echo "\$RESP" | python3 -c "import sys, json; print(json.load(sys.stdin).get('data', {}).get('alias', ''))" 2>/dev/null)
             if [ -n "\$NEW_ALIAS" ]; then
                 echo "\$NEW_ALIAS" > "\$ALIAS_FILE"
@@ -224,9 +243,9 @@ done
             if [ -f "\$ALIAS_FILE" ]; then
                 SAVED_ALIAS=\$(cat "\$ALIAS_FILE")
                 curl -s -X PATCH "https://api.tinyurl.com/update" \
-                     -H "Authorization: Bearer ${TINYURL_TOKEN}" \
+                     -H "Authorization: Bearer \${TOKEN}" \
                      -H "Content-Type: application/json" \
-                     -d "{\"domain\":\"tinyurl.com\",\"alias\":\"\${SAVED_ALIAS}\",\"url\":\"\${CURR_URL}\"}" >/dev/null
+                     -d "{\"domain\":\"tinyurl.com\",\"alias\":\"\${SAVED_ALIAS}\",\"url\":\"\${CURR_URL}\"}" > "$CONF_DIR1/tinyurl_api.log" 2>&1
             fi
         fi
     done
@@ -239,8 +258,14 @@ EOF
 cat <<EOF > "$CONF_DIR2/run_service.sh"
 #!/usr/bin/env bash
 
+# Load TinyURL token dynamically from ~/.tinyurl_env at runtime (prevents token hardcoding)
+if [ -f "\$HOME/.tinyurl_env" ]; then
+    source "\$HOME/.tinyurl_env"
+fi
+TOKEN="\${TINYURL_API_TOKEN:-\${TINYURL_TOKEN}}"
+
 # Start qBittorrent-nox in background
-/usr/bin/qbittorrent-nox --profile="$CONF_DIR2" --webui-port=$USER2_PORT &
+"$QBT_BIN" --profile="$CONF_DIR2" --webui-port=$USER2_PORT &
 QB_PID=\$!
 
 sleep 2
@@ -251,7 +276,7 @@ FLOOD_PID=\$!
 
 # Start cloudflared Quick Tunnel pointing to Flood Web UI Port
 rm -f "$CONF_DIR2/tunnel.log"
-cloudflared tunnel --url "http://localhost:$FLOOD_PORT" > "$CONF_DIR2/tunnel.log" 2>&1 &
+"$CF_BIN" tunnel --url "http://localhost:$FLOOD_PORT" > "$CONF_DIR2/tunnel.log" 2>&1 &
 CF_PID=\$!
 
 # Initial Sync / Update to TinyURL API
@@ -260,17 +285,20 @@ for i in {1..20}; do
         TUNNEL_URL=\$(grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR2/tunnel.log" | head -n 1)
         
         ALIAS_FILE="$CONF_DIR2/tinyurl_alias.txt"
+        LOG_FILE="$CONF_DIR2/tinyurl_api.log"
+        
         if [ -f "\$ALIAS_FILE" ]; then
             SAVED_ALIAS=\$(cat "\$ALIAS_FILE")
             curl -s -X PATCH "https://api.tinyurl.com/update" \
-                 -H "Authorization: Bearer ${TINYURL_TOKEN}" \
+                 -H "Authorization: Bearer \${TOKEN}" \
                  -H "Content-Type: application/json" \
-                 -d "{\"domain\":\"tinyurl.com\",\"alias\":\"\${SAVED_ALIAS}\",\"url\":\"\${TUNNEL_URL}\"}" >/dev/null
+                 -d "{\"domain\":\"tinyurl.com\",\"alias\":\"\${SAVED_ALIAS}\",\"url\":\"\${TUNNEL_URL}\"}" > "\$LOG_FILE" 2>&1
         else
             RESP=\$(curl -s -X POST "https://api.tinyurl.com/create" \
-                 -H "Authorization: Bearer ${TINYURL_TOKEN}" \
+                 -H "Authorization: Bearer \${TOKEN}" \
                  -H "Content-Type: application/json" \
                  -d "{\"url\":\"\${TUNNEL_URL}\"}")
+            echo "\$RESP" > "\$LOG_FILE"
             NEW_ALIAS=\$(echo "\$RESP" | python3 -c "import sys, json; print(json.load(sys.stdin).get('data', {}).get('alias', ''))" 2>/dev/null)
             if [ -n "\$NEW_ALIAS" ]; then
                 echo "\$NEW_ALIAS" > "\$ALIAS_FILE"
@@ -291,9 +319,9 @@ done
             if [ -f "\$ALIAS_FILE" ]; then
                 SAVED_ALIAS=\$(cat "\$ALIAS_FILE")
                 curl -s -X PATCH "https://api.tinyurl.com/update" \
-                     -H "Authorization: Bearer ${TINYURL_TOKEN}" \
+                     -H "Authorization: Bearer \${TOKEN}" \
                      -H "Content-Type: application/json" \
-                     -d "{\"domain\":\"tinyurl.com\",\"alias\":\"\${SAVED_ALIAS}\",\"url\":\"\${CURR_URL}\"}" >/dev/null
+                     -d "{\"domain\":\"tinyurl.com\",\"alias\":\"\${SAVED_ALIAS}\",\"url\":\"\${CURR_URL}\"}" > "$CONF_DIR2/tinyurl_api.log" 2>&1
             fi
         fi
     done
@@ -305,8 +333,8 @@ EOF
 chmod +x "$CONF_DIR1/run_service.sh"
 chmod +x "$CONF_DIR2/run_service.sh"
 
-# 5. Systemd Setup
-echo -e "\n${BOLD}Step 5: Registering Systemd Services...${RESET}"
+# 6. Systemd Unit Registration (Corrected Ordering: Write -> Reload -> Enable)
+echo -e "\n${BOLD}Step 6: Registering Systemd Services...${RESET}"
 
 SERVICE_PATH1="/etc/systemd/system/qbittorrent-$USER1_NAME.service"
 SERVICE_PATH2="/etc/systemd/system/qbittorrent-$USER2_NAME.service"
@@ -320,7 +348,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$USER
-ExecStart=/usr/bin/bash $CONF_DIR1/run_service.sh
+ExecStart=$BASH_BIN $CONF_DIR1/run_service.sh
 Restart=on-failure
 
 [Install]
@@ -336,7 +364,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$USER
-ExecStart=/usr/bin/bash $CONF_DIR2/run_service.sh
+ExecStart=$BASH_BIN $CONF_DIR2/run_service.sh
 Restart=on-failure
 
 [Install]
