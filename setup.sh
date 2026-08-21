@@ -339,8 +339,30 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now "qbittorrent-$USER1_NAME"
 sudo systemctl enable --now "qbittorrent-$USER2_NAME"
 
+echo -e "\n${BOLD}Waiting for TinyURL links to generate...${RESET}"
+for i in {1..12}; do
+    if [ -f "$CONF_DIR1/tinyurl_alias.txt" ] && [ -f "$CONF_DIR2/tinyurl_alias.txt" ]; then
+        break
+    fi
+    sleep 1
+done
+
+ALIAS1=$(cat "$CONF_DIR1/tinyurl_alias.txt" 2>/dev/null || echo "generating...")
+ALIAS2=$(cat "$CONF_DIR2/tinyurl_alias.txt" 2>/dev/null || echo "generating...")
+
 echo -e "\n${GREEN}${BOLD}======================================================================${RESET}"
 echo -e "${GREEN}${BOLD}                Installation Complete!                                ${RESET}"
 echo -e "${GREEN}${BOLD}======================================================================${RESET}"
-echo -e "TinyURL links will automatically persist and update across restarts!"
+echo -e "Your Static TinyURL Redirect Links:"
+if [ "$ALIAS1" != "generating..." ]; then
+    echo -e "  🔒 $USER1_NAME (VueTorrent): ${CYAN}https://tinyurl.com/${ALIAS1}${RESET}"
+else
+    echo -e "  🔒 $USER1_NAME (VueTorrent): ${YELLOW}Generating in background (check ~/.config/qBittorrent-$USER1_NAME/tinyurl_alias.txt)${RESET}"
+fi
+
+if [ "$ALIAS2" != "generating..." ]; then
+    echo -e "  🌐 $USER2_NAME (Flood UI):   ${CYAN}https://tinyurl.com/${ALIAS2}${RESET}"
+else
+    echo -e "  🌐 $USER2_NAME (Flood UI):   ${YELLOW}Generating in background (check ~/.config/qBittorrent-$USER2_NAME/tinyurl_alias.txt)${RESET}"
+fi
 echo ""
