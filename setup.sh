@@ -136,8 +136,8 @@ rm -rf "$CONF_DIR1" "$CONF_DIR2"
 rm -rf "$HOME/.cache/qBittorrent-$USER1_NAME" "$HOME/.cache/qBittorrent-$USER2_NAME"
 rm -rf "$HOME/.local/share/qBittorrent-$USER1_NAME" "$HOME/.local/share/qBittorrent-$USER2_NAME"
 
-# Remove systemd services for selected profiles
-sudo rm -f "/etc/systemd/system/qbittorrent-$USER1_NAME.service" "/etc/systemd/system/qbittorrent-$USER2_NAME.service" >/dev/null 2>&1 || true
+# Remove systemd services for selected profiles using pkexec
+pkexec rm -f "/etc/systemd/system/qbittorrent-$USER1_NAME.service" "/etc/systemd/system/qbittorrent-$USER2_NAME.service" >/dev/null 2>&1 || true
 echo -e "  [${GREEN}✓${RESET}] Old configuration folders for $USER1_NAME & $USER2_NAME trashed."
 
 # Create Fresh Profile Directories
@@ -333,13 +333,13 @@ EOF
 chmod +x "$CONF_DIR1/run_service.sh"
 chmod +x "$CONF_DIR2/run_service.sh"
 
-# 6. Systemd Unit Registration (Corrected Ordering: Write -> Reload -> Enable)
+# 6. Systemd Unit Registration via pkexec
 echo -e "\n${BOLD}Step 6: Registering Systemd Services...${RESET}"
 
 SERVICE_PATH1="/etc/systemd/system/qbittorrent-$USER1_NAME.service"
 SERVICE_PATH2="/etc/systemd/system/qbittorrent-$USER2_NAME.service"
 
-sudo bash -c "cat <<EOF > $SERVICE_PATH1
+pkexec bash -c "cat <<EOF > $SERVICE_PATH1
 [Unit]
 Description=qBittorrent-nox ($USER1_NAME - VueTorrent) with TinyURL Auto-Update
 After=network-online.target
@@ -355,7 +355,7 @@ Restart=on-failure
 WantedBy=multi-user.target
 EOF"
 
-sudo bash -c "cat <<EOF > $SERVICE_PATH2
+pkexec bash -c "cat <<EOF > $SERVICE_PATH2
 [Unit]
 Description=qBittorrent-nox ($USER2_NAME - Flood UI) with TinyURL Auto-Update
 After=network-online.target
@@ -371,9 +371,9 @@ Restart=on-failure
 WantedBy=multi-user.target
 EOF"
 
-sudo systemctl daemon-reload
-sudo systemctl enable --now "qbittorrent-$USER1_NAME"
-sudo systemctl enable --now "qbittorrent-$USER2_NAME"
+pkexec systemctl daemon-reload
+pkexec systemctl enable --now "qbittorrent-$USER1_NAME"
+pkexec systemctl enable --now "qbittorrent-$USER2_NAME"
 
 echo -e "\n${BOLD}Waiting for TinyURL links to generate...${RESET}"
 for i in {1..12}; do
