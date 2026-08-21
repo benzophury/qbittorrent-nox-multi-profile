@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# qBittorrent-nox Multi-Profile & Cloudflare Setup Installer
+# qBittorrent-nox Multi-Profile & Cloudflare Worker Auto-Sync Installer
 # ==============================================================================
 
 set -e
@@ -14,7 +14,7 @@ RESET="\033[0m"
 
 echo -e "${CYAN}${BOLD}"
 echo "======================================================================"
-echo "    qBittorrent-nox Multi-Profile & Cloudflare Setup Installer       "
+echo "    qBittorrent-nox Multi-Profile & Cloudflare Worker Installer      "
 echo "======================================================================"
 echo -e "${RESET}"
 
@@ -37,34 +37,30 @@ echo -e "\n${BOLD}Step 1: Checking Dependencies...${RESET}"
 if command -v qbittorrent-nox >/dev/null 2>&1; then
     echo -e "  [${GREEN}✓${RESET}] qbittorrent-nox is installed."
 else
-    echo -e "  [${YELLOW}!${RESET}] qbittorrent-nox is NOT installed."
-    read -p "Would you like to install qbittorrent-nox now? (y/n): " INSTALL_QB
-    if [[ "$INSTALL_QB" =~ ^[Yy]$ ]]; then
-        if command -v apt >/dev/null 2>&1; then
-            sudo apt update && sudo apt install -y qbittorrent-nox python3
-        elif command -v dnf >/dev/null 2>&1; then
-            sudo dnf install -y qbittorrent-nox python3
-        elif command -v pacman >/dev/null 2>&1; then
-            sudo pacman -S --noconfirm qbittorrent-nox python3
-        else
-            echo -e "  [${RED}✗${RESET}] Automatic package manager installation not supported. Please install qbittorrent-nox manually."
-            exit 1
-        fi
-    else
-        echo -e "  [${RED}✗${RESET}] qbittorrent-nox is required to proceed. Exiting."
-        exit 1
-    fi
+    echo -e "  [${RED}✗${RESET}] qbittorrent-nox is required. Please install it first."
+    exit 1
 fi
 
-# 2. Configure Profile 1 (Private)
-echo -e "\n${BOLD}Step 2: Profile 1 Configuration (Private Profile)${RESET}"
+if command -v cloudflared >/dev/null 2>&1; then
+    echo -e "  [${GREEN}✓${RESET}] cloudflared is installed."
+else
+    echo -e "  [${YELLOW}!${RESET}] cloudflared not found in standard PATH. Please ensure cloudflared is available."
+fi
+
+# 2. Cloudflare Worker Credentials
+echo -e "\n${BOLD}Step 2: Cloudflare Worker Sync Configuration${RESET}"
+read -p "Enter your Cloudflare Worker URL (e.g. https://your-worker.workers.dev): " WORKER_URL
+read -s -p "Enter your Worker SECRET_KEY: " SECRET_KEY
+echo ""
+
+# 3. Configure Profile 1 (Private)
+echo -e "\n${BOLD}Step 3: Profile 1 Configuration (Private Profile)${RESET}"
 read -p "Enter name for Profile 1 [default: Private]: " USER1_NAME
 USER1_NAME=${USER1_NAME:-Private}
 
 read -s -p "Enter Web UI password for Profile 1 ($USER1_NAME): " USER1_PASS
 echo ""
 if [ -z "$USER1_PASS" ]; then
-    echo -e "${YELLOW}No password entered. Generating random password...${RESET}"
     USER1_PASS=$(openssl rand -base64 12)
     echo -e "Generated Password for $USER1_NAME: ${CYAN}$USER1_PASS${RESET}"
 fi
@@ -77,15 +73,14 @@ USER1_DIR=${USER1_DIR:-$HOME/Downloads/$USER1_NAME}
 
 USER1_HASH=$(hash_password "$USER1_PASS")
 
-# 3. Configure Profile 2 (Public)
-echo -e "\n${BOLD}Step 3: Profile 2 Configuration (Public Profile)${RESET}"
+# 4. Configure Profile 2 (Public)
+echo -e "\n${BOLD}Step 4: Profile 2 Configuration (Public Profile)${RESET}"
 read -p "Enter name for Profile 2 [default: Public]: " USER2_NAME
 USER2_NAME=${USER2_NAME:-Public}
 
 read -s -p "Enter Web UI password for Profile 2 ($USER2_NAME): " USER2_PASS
 echo ""
 if [ -z "$USER2_PASS" ]; then
-    echo -e "${YELLOW}No password entered. Generating random password...${RESET}"
     USER2_PASS=$(openssl rand -base64 12)
     echo -e "Generated Password for $USER2_NAME: ${CYAN}$USER2_PASS${RESET}"
 fi
@@ -102,13 +97,12 @@ USER2_HASH=$(hash_password "$USER2_PASS")
 CONF_DIR1="$HOME/.config/qBittorrent-$USER1_NAME"
 CONF_DIR2="$HOME/.config/qBittorrent-$USER2_NAME"
 
-echo -e "\n${BOLD}Creating Directories...${RESET}"
 mkdir -p "$CONF_DIR1/qBittorrent"
 mkdir -p "$CONF_DIR2/qBittorrent"
 mkdir -p "$USER1_DIR"
 mkdir -p "$USER2_DIR"
 
-# Generate qBittorrent.conf for Profile 1
+# Write qBittorrent.conf for Profile 1
 cat <<EOF > "$CONF_DIR1/qBittorrent/qBittorrent.conf"
 [Preferences]
 Downloads\SavePath=$USER1_DIR
@@ -120,7 +114,7 @@ WebUI\UseUPnP=false
 BitTorrent\Session\Port=6881
 EOF
 
-# Generate qBittorrent.conf for Profile 2
+# Write qBittorrent.conf for Profile 2
 cat <<EOF > "$CONF_DIR2/qBittorrent/qBittorrent.conf"
 [Preferences]
 Downloads\SavePath=$USER2_DIR
@@ -132,24 +126,68 @@ WebUI\UseUPnP=false
 BitTorrent\Session\Port=6882
 EOF
 
-echo -e "  [${GREEN}✓${RESET}] Created config for $USER1_NAME at $CONF_DIR1"
-echo -e "  [${GREEN}✓${RESET}] Created config for $USER2_NAME at $CONF_DIR2"
+# Create Baked-in Systemd Runner Scripts
+cat <<EOF > "$CONF_DIR1/run_service.sh"
+#!/usr/bin/env bash
+/usr/bin/qbittorrent-nox --profile="$CONF_DIR1" --webui-port=$USER1_PORT &
+QB_PID=\$!
 
-# 4. Systemd Setup
-echo -e "\n${BOLD}Step 4: Setting up Systemd Services...${RESET}"
+rm -f "$CONF_DIR1/tunnel.log"
+cloudflared tunnel --url "http://localhost:$USER1_PORT" > "$CONF_DIR1/tunnel.log" 2>&1 &
+CF_PID=\$!
+
+for i in {1..20}; do
+    if grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR1/tunnel.log" >/dev/null 2>&1; then
+        TUNNEL_URL=\$(grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR1/tunnel.log" | head -n 1)
+        curl -s "${WORKER_URL}/set?secret=${SECRET_KEY}&user=$(echo $USER1_NAME | tr '[:upper:]' '[:lower:]')&url=\${TUNNEL_URL}" >/dev/null
+        break
+    fi
+    sleep 1
+done
+
+wait \$QB_PID \$CF_PID
+EOF
+
+cat <<EOF > "$CONF_DIR2/run_service.sh"
+#!/usr/bin/env bash
+/usr/bin/qbittorrent-nox --profile="$CONF_DIR2" --webui-port=$USER2_PORT &
+QB_PID=\$!
+
+rm -f "$CONF_DIR2/tunnel.log"
+cloudflared tunnel --url "http://localhost:$USER2_PORT" > "$CONF_DIR2/tunnel.log" 2>&1 &
+CF_PID=\$!
+
+for i in {1..20}; do
+    if grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR2/tunnel.log" >/dev/null 2>&1; then
+        TUNNEL_URL=\$(grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR2/tunnel.log" | head -n 1)
+        curl -s "${WORKER_URL}/set?secret=${SECRET_KEY}&user=$(echo $USER2_NAME | tr '[:upper:]' '[:lower:]')&url=\${TUNNEL_URL}" >/dev/null
+        break
+    fi
+    sleep 1
+done
+
+wait \$QB_PID \$CF_PID
+EOF
+
+chmod +x "$CONF_DIR1/run_service.sh"
+chmod +x "$CONF_DIR2/run_service.sh"
+
+# 5. Systemd Setup
+echo -e "\n${BOLD}Step 5: Registering Systemd Services...${RESET}"
 
 SERVICE_PATH1="/etc/systemd/system/qbittorrent-$USER1_NAME.service"
 SERVICE_PATH2="/etc/systemd/system/qbittorrent-$USER2_NAME.service"
 
 sudo bash -c "cat <<EOF > $SERVICE_PATH1
 [Unit]
-Description=qBittorrent-nox ($USER1_NAME)
-After=network.target
+Description=qBittorrent-nox ($USER1_NAME) with Cloudflare Worker Auto-Sync
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=$USER
-ExecStart=/usr/bin/qbittorrent-nox --profile=$CONF_DIR1 --webui-port=$USER1_PORT
+ExecStart=$CONF_DIR1/run_service.sh
 Restart=on-failure
 
 [Install]
@@ -158,31 +196,28 @@ EOF"
 
 sudo bash -c "cat <<EOF > $SERVICE_PATH2
 [Unit]
-Description=qBittorrent-nox ($USER2_NAME)
-After=network.target
+Description=qBittorrent-nox ($USER2_NAME) with Cloudflare Worker Auto-Sync
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=$USER
-ExecStart=/usr/bin/qbittorrent-nox --profile=$CONF_DIR2 --webui-port=$USER2_PORT
+ExecStart=$CONF_DIR2/run_service.sh
 Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
 EOF"
 
-echo -e "  [${GREEN}✓${RESET}] Created systemd service qbittorrent-$USER1_NAME.service"
-echo -e "  [${GREEN}✓${RESET}] Created systemd service qbittorrent-$USER2_NAME.service"
-
 sudo systemctl daemon-reload
 sudo systemctl enable --now "qbittorrent-$USER1_NAME"
 sudo systemctl enable --now "qbittorrent-$USER2_NAME"
 
-echo -e "  [${GREEN}✓${RESET}] Enabled and started both services!"
-
 echo -e "\n${GREEN}${BOLD}======================================================================${RESET}"
 echo -e "${GREEN}${BOLD}                Installation Complete!                                ${RESET}"
 echo -e "${GREEN}${BOLD}======================================================================${RESET}"
-echo -e "Profile 1 ($USER1_NAME): ${CYAN}http://localhost:$USER1_PORT${RESET} (User: $USER1_NAME / Pass: [Set during setup])"
-echo -e "Profile 2 ($USER2_NAME): ${CYAN}http://localhost:$USER2_PORT${RESET} (User: $USER2_NAME / Pass: [Set during setup])"
+echo -e "Permanent Worker URLs:"
+echo -e "  🔒 $(echo $USER1_NAME): ${CYAN}${WORKER_URL}/$(echo $USER1_NAME | tr '[:upper:]' '[:lower:]')${RESET}"
+echo -e "  🌐 $(echo $USER2_NAME): ${CYAN}${WORKER_URL}/$(echo $USER2_NAME | tr '[:upper:]' '[:lower:]')${RESET}"
 echo ""
