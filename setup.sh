@@ -90,8 +90,8 @@ if [ -z "$USER2_PASS" ]; then
     echo -e "Generated Password for $USER2_NAME: ${CYAN}$USER2_PASS${RESET}"
 fi
 
-read -p "Enter Web UI Port for Profile 2 ($USER2_NAME) [default: 8081]: " USER2_PORT
-USER2_PORT=${USER2_PORT:-8081}
+read -p "Enter Web UI Port for Profile 2 ($USER2_NAME) [default: 8090]: " USER2_PORT
+USER2_PORT=${USER2_PORT:-8090}
 
 read -p "Enter Download Path for Profile 2 ($USER2_NAME) [default: $HOME/Downloads/$USER2_NAME]: " USER2_DIR
 USER2_DIR=${USER2_DIR:-$HOME/Downloads/$USER2_NAME}
