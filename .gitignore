@@ -1,0 +1,7 @@
+# Logs & Temporary files
+*.log
+cloudflared-ingress-config.yml
+.DS_Store
+
+# System & Config runtime overrides
+*.conf
