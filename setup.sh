@@ -31,8 +31,8 @@ print(f'@ByteArray({salt_b64}:{key_b64})')
 " "$1"
 }
 
-# 1. Dependency Checks & Process Cleanup
-echo -e "\n${BOLD}Step 1: Checking Dependencies & Cleaning Up Old Instances...${RESET}"
+# 1. Dependency Checks & Trashing Old Config Files
+echo -e "\n${BOLD}Step 1: Trashing Old Profile Config Folders & Checking Dependencies...${RESET}"
 
 if command -v qbittorrent-nox >/dev/null 2>&1; then
     echo -e "  [${GREEN}✓${RESET}] qbittorrent-nox is installed."
@@ -53,11 +53,19 @@ else
     echo -e "  [${YELLOW}!${RESET}] Node.js / npx not found. Installing Node.js recommended for Flood."
 fi
 
-# Kill any existing qBittorrent / Flood / cloudflared instances
-echo -e "  [${YELLOW}!${RESET}] Stopping any running qBittorrent & tunnel processes..."
+# Stop processes and trash old qBittorrent profile configs & systemd services
+echo -e "  [${YELLOW}!${RESET}] Stopping running instances and trashing old config folders..."
 pkill -9 -f qbittorrent-nox >/dev/null 2>&1 || true
 pkill -9 -f flood >/dev/null 2>&1 || true
-echo -e "  [${GREEN}✓${RESET}] Process cleanup complete."
+pkill -9 -f cloudflared >/dev/null 2>&1 || true
+
+rm -rf "$HOME/.config"/qBittorrent-*
+rm -rf "$HOME/.cache"/qBittorrent*
+rm -rf "$HOME/.local/share"/qBittorrent*
+sudo rm -f /etc/systemd/system/qbittorrent-*.service >/dev/null 2>&1 || true
+sudo systemctl daemon-reload >/dev/null 2>&1 || true
+
+echo -e "  [${GREEN}✓${RESET}] Old configuration folders and services trashed."
 
 # 2. TinyURL API Credentials (Auto-detects ~/.tinyurl_env)
 echo -e "\n${BOLD}Step 2: TinyURL API Configuration${RESET}"
