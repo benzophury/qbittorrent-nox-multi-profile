@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# qBittorrent-nox Multi-Profile AIO Installer (VueTorrent + Flood + TinyURL Update)
+# qBittorrent-nox Multi-Profile AIO Installer (VueTorrent + Flood + TinyURL API)
 # ==============================================================================
 
 set -e
@@ -91,9 +91,6 @@ fi
 read -p "Enter Web UI Port for Profile 1 ($USER1_NAME) [default: 8080]: " USER1_PORT
 USER1_PORT=${USER1_PORT:-8080}
 
-read -p "Enter your existing TinyURL alias for Profile 1 [default: tbd-qb]: " ALIAS1
-ALIAS1=${ALIAS1:-"tbd-qb"}
-
 read -p "Enter Download Path for Profile 1 ($USER1_NAME) [default: $HOME/Downloads/$USER1_NAME]: " USER1_DIR
 USER1_DIR=${USER1_DIR:-$HOME/Downloads/$USER1_NAME}
 
@@ -116,9 +113,6 @@ USER2_PORT=${USER2_PORT:-8090}
 
 read -p "Enter Flood Web UI Port for Profile 2 ($USER2_NAME) [default: 3000]: " FLOOD_PORT
 FLOOD_PORT=${FLOOD_PORT:-3000}
-
-read -p "Enter your existing TinyURL alias for Profile 2 [default: tbd-qb-public]: " ALIAS2
-ALIAS2=${ALIAS2:-"tbd-qb-public"}
 
 read -p "Enter Download Path for Profile 2 ($USER2_NAME) [default: $HOME/Downloads/$USER2_NAME]: " USER2_DIR
 USER2_DIR=${USER2_DIR:-$HOME/Downloads/$USER2_NAME}
@@ -172,7 +166,7 @@ WebUI\UseUPnP=false
 BitTorrent\Session\Port=6882
 EOF
 
-# Create Baked-in Systemd Runner Script for Profile 1 (Private - Updates existing TinyURL alias)
+# Create Baked-in Systemd Runner Script for Profile 1 (Private)
 cat <<EOF > "$CONF_DIR1/run_service.sh"
 #!/usr/bin/env bash
 
@@ -185,16 +179,28 @@ rm -f "$CONF_DIR1/tunnel.log"
 cloudflared tunnel --url "http://localhost:$USER1_PORT" > "$CONF_DIR1/tunnel.log" 2>&1 &
 CF_PID=\$!
 
-# Initial Update to TinyURL API
+# Initial Sync / Update to TinyURL API
 for i in {1..20}; do
     if grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR1/tunnel.log" >/dev/null 2>&1; then
         TUNNEL_URL=\$(grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR1/tunnel.log" | head -n 1)
         
-        # Update Existing TinyURL Alias
-        curl -s -X PATCH "https://api.tinyurl.com/update" \
-             -H "Authorization: Bearer ${TINYURL_TOKEN}" \
-             -H "Content-Type: application/json" \
-             -d "{\"domain\":\"tinyurl.com\",\"alias\":\"${ALIAS1}\",\"url\":\"\${TUNNEL_URL}\"}" >/dev/null
+        ALIAS_FILE="$CONF_DIR1/tinyurl_alias.txt"
+        if [ -f "\$ALIAS_FILE" ]; then
+            SAVED_ALIAS=\$(cat "\$ALIAS_FILE")
+            curl -s -X PATCH "https://api.tinyurl.com/update" \
+                 -H "Authorization: Bearer ${TINYURL_TOKEN}" \
+                 -H "Content-Type: application/json" \
+                 -d "{\"domain\":\"tinyurl.com\",\"alias\":\"\${SAVED_ALIAS}\",\"url\":\"\${TUNNEL_URL}\"}" >/dev/null
+        else
+            RESP=\$(curl -s -X POST "https://api.tinyurl.com/create" \
+                 -H "Authorization: Bearer ${TINYURL_TOKEN}" \
+                 -H "Content-Type: application/json" \
+                 -d "{\"url\":\"\${TUNNEL_URL}\"}")
+            NEW_ALIAS=\$(echo "\$RESP" | python3 -c "import sys, json; print(json.load(sys.stdin).get('data', {}).get('alias', ''))" 2>/dev/null)
+            if [ -n "\$NEW_ALIAS" ]; then
+                echo "\$NEW_ALIAS" > "\$ALIAS_FILE"
+            fi
+        fi
         break
     fi
     sleep 1
@@ -206,10 +212,14 @@ done
         sleep 300
         if grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR1/tunnel.log" >/dev/null 2>&1; then
             CURR_URL=\$(grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR1/tunnel.log" | head -n 1)
-            curl -s -X PATCH "https://api.tinyurl.com/update" \
-                 -H "Authorization: Bearer ${TINYURL_TOKEN}" \
-                 -H "Content-Type: application/json" \
-                 -d "{\"domain\":\"tinyurl.com\",\"alias\":\"${ALIAS1}\",\"url\":\"\${CURR_URL}\"}" >/dev/null
+            ALIAS_FILE="$CONF_DIR1/tinyurl_alias.txt"
+            if [ -f "\$ALIAS_FILE" ]; then
+                SAVED_ALIAS=\$(cat "\$ALIAS_FILE")
+                curl -s -X PATCH "https://api.tinyurl.com/update" \
+                     -H "Authorization: Bearer ${TINYURL_TOKEN}" \
+                     -H "Content-Type: application/json" \
+                     -d "{\"domain\":\"tinyurl.com\",\"alias\":\"\${SAVED_ALIAS}\",\"url\":\"\${CURR_URL}\"}" >/dev/null
+            fi
         fi
     done
 ) &
@@ -217,7 +227,7 @@ done
 wait \$QB_PID \$CF_PID
 EOF
 
-# Create Baked-in Systemd Runner Script for Profile 2 (Public - Updates existing TinyURL alias)
+# Create Baked-in Systemd Runner Script for Profile 2 (Public)
 cat <<EOF > "$CONF_DIR2/run_service.sh"
 #!/usr/bin/env bash
 
@@ -236,16 +246,28 @@ rm -f "$CONF_DIR2/tunnel.log"
 cloudflared tunnel --url "http://localhost:$FLOOD_PORT" > "$CONF_DIR2/tunnel.log" 2>&1 &
 CF_PID=\$!
 
-# Initial Update to TinyURL API
+# Initial Sync / Update to TinyURL API
 for i in {1..20}; do
     if grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR2/tunnel.log" >/dev/null 2>&1; then
         TUNNEL_URL=\$(grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR2/tunnel.log" | head -n 1)
         
-        # Update Existing TinyURL Alias
-        curl -s -X PATCH "https://api.tinyurl.com/update" \
-             -H "Authorization: Bearer ${TINYURL_TOKEN}" \
-             -H "Content-Type: application/json" \
-             -d "{\"domain\":\"tinyurl.com\",\"alias\":\"${ALIAS2}\",\"url\":\"\${TUNNEL_URL}\"}" >/dev/null
+        ALIAS_FILE="$CONF_DIR2/tinyurl_alias.txt"
+        if [ -f "\$ALIAS_FILE" ]; then
+            SAVED_ALIAS=\$(cat "\$ALIAS_FILE")
+            curl -s -X PATCH "https://api.tinyurl.com/update" \
+                 -H "Authorization: Bearer ${TINYURL_TOKEN}" \
+                 -H "Content-Type: application/json" \
+                 -d "{\"domain\":\"tinyurl.com\",\"alias\":\"\${SAVED_ALIAS}\",\"url\":\"\${TUNNEL_URL}\"}" >/dev/null
+        else
+            RESP=\$(curl -s -X POST "https://api.tinyurl.com/create" \
+                 -H "Authorization: Bearer ${TINYURL_TOKEN}" \
+                 -H "Content-Type: application/json" \
+                 -d "{\"url\":\"\${TUNNEL_URL}\"}")
+            NEW_ALIAS=\$(echo "\$RESP" | python3 -c "import sys, json; print(json.load(sys.stdin).get('data', {}).get('alias', ''))" 2>/dev/null)
+            if [ -n "\$NEW_ALIAS" ]; then
+                echo "\$NEW_ALIAS" > "\$ALIAS_FILE"
+            fi
+        fi
         break
     fi
     sleep 1
@@ -257,10 +279,14 @@ done
         sleep 300
         if grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR2/tunnel.log" >/dev/null 2>&1; then
             CURR_URL=\$(grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR2/tunnel.log" | head -n 1)
-            curl -s -X PATCH "https://api.tinyurl.com/update" \
-                 -H "Authorization: Bearer ${TINYURL_TOKEN}" \
-                 -H "Content-Type: application/json" \
-                 -d "{\"domain\":\"tinyurl.com\",\"alias\":\"${ALIAS2}\",\"url\":\"\${CURR_URL}\"}" >/dev/null
+            ALIAS_FILE="$CONF_DIR2/tinyurl_alias.txt"
+            if [ -f "\$ALIAS_FILE" ]; then
+                SAVED_ALIAS=\$(cat "\$ALIAS_FILE")
+                curl -s -X PATCH "https://api.tinyurl.com/update" \
+                     -H "Authorization: Bearer ${TINYURL_TOKEN}" \
+                     -H "Content-Type: application/json" \
+                     -d "{\"domain\":\"tinyurl.com\",\"alias\":\"\${SAVED_ALIAS}\",\"url\":\"\${CURR_URL}\"}" >/dev/null
+            fi
         fi
     done
 ) &
@@ -316,7 +342,5 @@ sudo systemctl enable --now "qbittorrent-$USER2_NAME"
 echo -e "\n${GREEN}${BOLD}======================================================================${RESET}"
 echo -e "${GREEN}${BOLD}                Installation Complete!                                ${RESET}"
 echo -e "${GREEN}${BOLD}======================================================================${RESET}"
-echo -e "Your Static TinyURL Redirect Links:"
-echo -e "  🔒 $(echo $USER1_NAME - VueTorrent): ${CYAN}https://tinyurl.com/${ALIAS1}${RESET}"
-echo -e "  🌐 $(echo $USER2_NAME - Flood UI):  ${CYAN}https://tinyurl.com/${ALIAS2}${RESET}"
+echo -e "TinyURL links will automatically persist and update across restarts!"
 echo ""
