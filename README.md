@@ -1,18 +1,18 @@
-# qBittorrent-nox Multi-Profile AIO Installer (VueTorrent + Flood UI)
+# qBittorrent-nox Multi-Profile AIO Installer (VueTorrent + Flood UI + TinyURL Auto-Sync)
 
-An automated, interactive installer to set up **multiple isolated qBittorrent-nox instances** (profiles) on Linux, featuring custom Web UIs (**VueTorrent** & **Flood UI**), **systemd background services**, automatic browser launchers (**Firefox Nightly** & **LibreWolf**), and **Cloudflare Worker 302 Redirectors** (Streamix pattern).
+An automated, interactive installer to set up **multiple isolated qBittorrent-nox instances** (profiles) on Linux, featuring custom Web UIs (**VueTorrent** & **Flood UI**), **systemd background services**, and **TinyURL API Auto-Sync**.
 
 ---
 
 ## Features
 
 - **Multi-Profile Isolation**: Run 2 or more independent `qbittorrent-nox` instances (`Private` & `Public`) with separate logins, WebUI ports, peer ports, download directories, and torrent lists.
-- **Custom Dual Web UIs & Auto Browser Launchers**:
-  - 🔒 **Private Profile**: Powered by **[VueTorrent](https://github.com/VueTorrent/VueTorrent)** (Modern Vue.js dark mode UI) $\rightarrow$ Auto-launches in **Firefox Nightly**.
-  - 🌐 **Public Profile**: Powered by **[Flood UI](https://flood.js.org)** (Node.js & React torrent management suite) $\rightarrow$ Auto-launches in **LibreWolf**.
-- **Interactive Terminal Installer (`setup.sh`)**: One-command interactive setup prompting for custom ports, usernames, passwords, and download locations.
+- **Custom Dual Web UIs**:
+  - 🔒 **Private Profile**: Powered by **[VueTorrent](https://github.com/VueTorrent/VueTorrent)** (Modern Vue.js dark mode UI).
+  - 🌐 **Public Profile**: Powered by **[Flood UI](https://flood.js.org)** (Node.js & React torrent management suite).
+- **Interactive Terminal Installer (`setup.sh`)**: One-command interactive setup prompting for custom ports, usernames, passwords, and custom TinyURL aliases.
 - **Automated Systemd Services**: Creates, enables, and manages `qbittorrent-Private.service` and `qbittorrent-Public.service` automatically across reboots.
-- **Streamix Worker Pattern (302 Redirector)**: Uses a free Cloudflare Worker + KV store to map permanent Worker URLs (`https://qb.workers.dev/private` and `/public`) to dynamic `trycloudflare.com` tunnels without exposing bandwidth to Cloudflare or buying a custom domain!
+- **TinyURL API Auto-Sync**: Automatically updates your custom TinyURL links (`tinyurl.com/private-qb` and `tinyurl.com/public-qb`) via the TinyURL API whenever systemd restarts or reboots!
 
 ---
 
@@ -30,33 +30,34 @@ cd ~/qbittorrent-nox-multi-profile
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │ Runner System (Linux Host)                                             │
-│  - Private Profile (:8080) VueTorrent -> Quick Tunnel 1 -> Firefox     │
-│  - Public Profile  (:3000) Flood UI   -> Quick Tunnel 2 -> LibreWolf   │
+│  - Private Profile (:8080) VueTorrent -> Quick Tunnel 1                │
+│  - Public Profile  (:3000) Flood UI   -> Quick Tunnel 2                │
 └───────────────────────────┬────────────────────────────────────────────┘
-                            │ (1) Auto-syncs live temporary URLs on boot
+                            │ (1) Auto-syncs live temporary URLs via TinyURL API
                             ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│ Cloudflare Worker (your-worker.workers.dev)                            │
-│  - Stores active TARGET_URLs in Cloudflare KV                          │
-│  - Secret Key Authentication                                           │
+│ TinyURL API (https://api.tinyurl.com)                                  │
+│ Updates custom aliases:                                                │
+│  - tinyurl.com/private-qb -> active Quick Tunnel 1                     │
+│  - tinyurl.com/public-qb  -> active Quick Tunnel 2                     │
 └───────────────────────────┬────────────────────────────────────────────┘
-                            │ (2) HTTP 302 Redirect to live Quick Tunnel
+                            │ (2) Redirects to live Quick Tunnel
                             ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │ Web Browser / Client                                                   │
-│ Access Private: https://your-worker.workers.dev/private                │
-│ Access Public:  https://your-worker.workers.dev/public                 │
-└────────────────────────────────────────────────────────────────────────┘
+│ Access Private: https://tinyurl.com/private-qb                         │
+│ Access Public:  https://tinyurl.com/public-qb                          │
+└───────────────────────────┴────────────────────────────────────────────┘
 ```
 
 ---
 
 ## Default System Specs
 
-| Profile | Web UI Engine | Web UI Port | Target Browser | Config Directory | Systemd Service |
+| Profile | Web UI Engine | Web UI Port | qBittorrent API Port | TinyURL Alias | Systemd Service |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Private** | **VueTorrent** | `8080` | **Firefox Nightly** | `~/.config/qBittorrent-Private` | `qbittorrent-Private.service` |
-| **Public** | **Flood UI** | `3000` | **LibreWolf** | `~/.config/qBittorrent-Public` | `qbittorrent-Public.service` |
+| **Private** | **VueTorrent** | `8080` | `8080` | `tinyurl.com/private-qb` | `qbittorrent-Private.service` |
+| **Public** | **Flood UI** | `3000` | `8090` | `tinyurl.com/public-qb` | `qbittorrent-Public.service` |
 
 ---
 

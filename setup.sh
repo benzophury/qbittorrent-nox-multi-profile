@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# qBittorrent-nox Multi-Profile AIO Installer (VueTorrent + Flood + Cloudflare)
+# qBittorrent-nox Multi-Profile AIO Installer (VueTorrent + Flood + TinyURL)
 # ==============================================================================
 
 set -e
@@ -14,7 +14,7 @@ RESET="\033[0m"
 
 echo -e "${CYAN}${BOLD}"
 echo "======================================================================"
-echo "    qBittorrent-nox Multi-Profile AIO Installer (VueTorrent & Flood) "
+echo "    qBittorrent-nox Multi-Profile AIO Installer (TinyURL Auto-Sync)   "
 echo "======================================================================"
 echo -e "${RESET}"
 
@@ -59,10 +59,9 @@ pkill -9 -f qbittorrent-nox >/dev/null 2>&1 || true
 pkill -9 -f flood >/dev/null 2>&1 || true
 echo -e "  [${GREEN}✓${RESET}] Process cleanup complete."
 
-# 2. Cloudflare Worker Credentials
-echo -e "\n${BOLD}Step 2: Cloudflare Worker Sync Configuration${RESET}"
-read -p "Enter your Cloudflare Worker URL (e.g. https://your-worker.workers.dev): " WORKER_URL
-read -s -p "Enter your Worker SECRET_KEY: " SECRET_KEY
+# 2. TinyURL API Credentials
+echo -e "\n${BOLD}Step 2: TinyURL API Configuration${RESET}"
+read -s -p "Enter your TinyURL API Token: " TINYURL_TOKEN
 echo ""
 
 # 3. Configure Profile 1 (Private Profile - VueTorrent)
@@ -79,6 +78,9 @@ fi
 
 read -p "Enter Web UI Port for Profile 1 ($USER1_NAME) [default: 8080]: " USER1_PORT
 USER1_PORT=${USER1_PORT:-8080}
+
+read -p "Enter custom TinyURL alias for Profile 1 [default: $(echo $USER1_NAME | tr '[:upper:]' '[:lower:]')-qb]: " ALIAS1
+ALIAS1=${ALIAS1:-"$(echo $USER1_NAME | tr '[:upper:]' '[:lower:]')-qb"}
 
 read -p "Enter Download Path for Profile 1 ($USER1_NAME) [default: $HOME/Downloads/$USER1_NAME]: " USER1_DIR
 USER1_DIR=${USER1_DIR:-$HOME/Downloads/$USER1_NAME}
@@ -102,6 +104,9 @@ USER2_PORT=${USER2_PORT:-8090}
 
 read -p "Enter Flood Web UI Port for Profile 2 ($USER2_NAME) [default: 3000]: " FLOOD_PORT
 FLOOD_PORT=${FLOOD_PORT:-3000}
+
+read -p "Enter custom TinyURL alias for Profile 2 [default: $(echo $USER2_NAME | tr '[:upper:]' '[:lower:]')-qb]: " ALIAS2
+ALIAS2=${ALIAS2:-"$(echo $USER2_NAME | tr '[:upper:]' '[:lower:]')-qb"}
 
 read -p "Enter Download Path for Profile 2 ($USER2_NAME) [default: $HOME/Downloads/$USER2_NAME]: " USER2_DIR
 USER2_DIR=${USER2_DIR:-$HOME/Downloads/$USER2_NAME}
@@ -155,13 +160,9 @@ WebUI\UseUPnP=false
 BitTorrent\Session\Port=6882
 EOF
 
-# Create Baked-in Systemd Runner Script for Profile 1 (Private - VueTorrent + Firefox Nightly)
+# Create Baked-in Systemd Runner Script for Profile 1 (Private - TinyURL Sync)
 cat <<EOF > "$CONF_DIR1/run_service.sh"
 #!/usr/bin/env bash
-
-# Export GUI Display for Browser Launching from Systemd
-export DISPLAY=\${DISPLAY:-:0}
-export XAUTHORITY=\${XAUTHORITY:-\$HOME/.Xauthority}
 
 # Start qBittorrent-nox in background
 /usr/bin/qbittorrent-nox --profile="$CONF_DIR1" --webui-port=$USER1_PORT &
@@ -172,30 +173,35 @@ rm -f "$CONF_DIR1/tunnel.log"
 cloudflared tunnel --url "http://localhost:$USER1_PORT" > "$CONF_DIR1/tunnel.log" 2>&1 &
 CF_PID=\$!
 
-# Initial Sync & Open Browser (Firefox Nightly)
+# Initial Sync to TinyURL API
 for i in {1..20}; do
     if grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR1/tunnel.log" >/dev/null 2>&1; then
         TUNNEL_URL=\$(grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR1/tunnel.log" | head -n 1)
-        curl -s "${WORKER_URL}/set?secret=${SECRET_KEY}&user=$(echo $USER1_NAME | tr '[:upper:]' '[:lower:]')&url=\${TUNNEL_URL}" >/dev/null
         
-        # Open Private Profile in Firefox Nightly
-        if command -v firefoxnightly >/dev/null 2>&1; then
-            firefoxnightly "\${TUNNEL_URL}" >/dev/null 2>&1 &
-        elif command -v firefox-nightly >/dev/null 2>&1; then
-            firefox-nightly "\${TUNNEL_URL}" >/dev/null 2>&1 &
-        fi
+        # Create or Update TinyURL Alias
+        curl -s -X POST "https://api.tinyurl.com/create" \
+             -H "Authorization: Bearer ${TINYURL_TOKEN}" \
+             -H "Content-Type: application/json" \
+             -d "{\"url\":\"\${TUNNEL_URL}\",\"domain\":\"tinyurl.com\",\"alias\":\"${ALIAS1}\"}" >/dev/null || \
+        curl -s -X PATCH "https://api.tinyurl.com/update" \
+             -H "Authorization: Bearer ${TINYURL_TOKEN}" \
+             -H "Content-Type: application/json" \
+             -d "{\"url\":\"\${TUNNEL_URL}\",\"domain\":\"tinyurl.com\",\"alias\":\"${ALIAS1}\"}" >/dev/null
         break
     fi
     sleep 1
 done
 
-# Periodic Health Check Loop
+# Periodic Health Check Loop (Re-syncs TinyURL every 5 minutes)
 (
     while kill -0 \$CF_PID 2>/dev/null; do
         sleep 300
         if grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR1/tunnel.log" >/dev/null 2>&1; then
             CURR_URL=\$(grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR1/tunnel.log" | head -n 1)
-            curl -s "${WORKER_URL}/set?secret=${SECRET_KEY}&user=$(echo $USER1_NAME | tr '[:upper:]' '[:lower:]')&url=\${CURR_URL}" >/dev/null
+            curl -s -X PATCH "https://api.tinyurl.com/update" \
+                 -H "Authorization: Bearer ${TINYURL_TOKEN}" \
+                 -H "Content-Type: application/json" \
+                 -d "{\"url\":\"\${CURR_URL}\",\"domain\":\"tinyurl.com\",\"alias\":\"${ALIAS1}\"}" >/dev/null
         fi
     done
 ) &
@@ -203,13 +209,9 @@ done
 wait \$QB_PID \$CF_PID
 EOF
 
-# Create Baked-in Systemd Runner Script for Profile 2 (Public - Flood UI + LibreWolf)
+# Create Baked-in Systemd Runner Script for Profile 2 (Public - TinyURL Sync)
 cat <<EOF > "$CONF_DIR2/run_service.sh"
 #!/usr/bin/env bash
-
-# Export GUI Display for Browser Launching from Systemd
-export DISPLAY=\${DISPLAY:-:0}
-export XAUTHORITY=\${XAUTHORITY:-\$HOME/.Xauthority}
 
 # Start qBittorrent-nox in background
 /usr/bin/qbittorrent-nox --profile="$CONF_DIR2" --webui-port=$USER2_PORT &
@@ -226,28 +228,35 @@ rm -f "$CONF_DIR2/tunnel.log"
 cloudflared tunnel --url "http://localhost:$FLOOD_PORT" > "$CONF_DIR2/tunnel.log" 2>&1 &
 CF_PID=\$!
 
-# Initial Sync & Open Browser (LibreWolf)
+# Initial Sync to TinyURL API
 for i in {1..20}; do
     if grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR2/tunnel.log" >/dev/null 2>&1; then
         TUNNEL_URL=\$(grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR2/tunnel.log" | head -n 1)
-        curl -s "${WORKER_URL}/set?secret=${SECRET_KEY}&user=$(echo $USER2_NAME | tr '[:upper:]' '[:lower:]')&url=\${TUNNEL_URL}" >/dev/null
         
-        # Open Public Profile in LibreWolf
-        if command -v librewolf >/dev/null 2>&1; then
-            librewolf "\${TUNNEL_URL}" >/dev/null 2>&1 &
-        fi
+        # Create or Update TinyURL Alias
+        curl -s -X POST "https://api.tinyurl.com/create" \
+             -H "Authorization: Bearer ${TINYURL_TOKEN}" \
+             -H "Content-Type: application/json" \
+             -d "{\"url\":\"\${TUNNEL_URL}\",\"domain\":\"tinyurl.com\",\"alias\":\"${ALIAS2}\"}" >/dev/null || \
+        curl -s -X PATCH "https://api.tinyurl.com/update" \
+             -H "Authorization: Bearer ${TINYURL_TOKEN}" \
+             -H "Content-Type: application/json" \
+             -d "{\"url\":\"\${TUNNEL_URL}\",\"domain\":\"tinyurl.com\",\"alias\":\"${ALIAS2}\"}" >/dev/null
         break
     fi
     sleep 1
 done
 
-# Periodic Health Check Loop
+# Periodic Health Check Loop (Re-syncs TinyURL every 5 minutes)
 (
     while kill -0 \$CF_PID 2>/dev/null; do
         sleep 300
         if grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR2/tunnel.log" >/dev/null 2>&1; then
             CURR_URL=\$(grep -o "https://[a-zA-Z0-9-]*\.trycloudflare\.com" "$CONF_DIR2/tunnel.log" | head -n 1)
-            curl -s "${WORKER_URL}/set?secret=${SECRET_KEY}&user=$(echo $USER2_NAME | tr '[:upper:]' '[:lower:]')&url=\${CURR_URL}" >/dev/null
+            curl -s -X PATCH "https://api.tinyurl.com/update" \
+                 -H "Authorization: Bearer ${TINYURL_TOKEN}" \
+                 -H "Content-Type: application/json" \
+                 -d "{\"url\":\"\${CURR_URL}\",\"domain\":\"tinyurl.com\",\"alias\":\"${ALIAS2}\"}" >/dev/null
         fi
     done
 ) &
@@ -266,15 +275,13 @@ SERVICE_PATH2="/etc/systemd/system/qbittorrent-$USER2_NAME.service"
 
 sudo bash -c "cat <<EOF > $SERVICE_PATH1
 [Unit]
-Description=qBittorrent-nox ($USER1_NAME - VueTorrent) with Cloudflare Auto-Sync
+Description=qBittorrent-nox ($USER1_NAME - VueTorrent) with TinyURL Auto-Sync
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=$USER
-Environment=DISPLAY=:0
-Environment=XAUTHORITY=$HOME/.Xauthority
 ExecStart=$CONF_DIR1/run_service.sh
 Restart=on-failure
 
@@ -284,15 +291,13 @@ EOF"
 
 sudo bash -c "cat <<EOF > $SERVICE_PATH2
 [Unit]
-Description=qBittorrent-nox ($USER2_NAME - Flood UI) with Cloudflare Auto-Sync
+Description=qBittorrent-nox ($USER2_NAME - Flood UI) with TinyURL Auto-Sync
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=$USER
-Environment=DISPLAY=:0
-Environment=XAUTHORITY=$HOME/.Xauthority
 ExecStart=$CONF_DIR2/run_service.sh
 Restart=on-failure
 
@@ -305,9 +310,9 @@ sudo systemctl enable --now "qbittorrent-$USER1_NAME"
 sudo systemctl enable --now "qbittorrent-$USER2_NAME"
 
 echo -e "\n${GREEN}${BOLD}======================================================================${RESET}"
-echo -e "${GREEN}${BOLD}                Installation Complete! (AIO)                          ${RESET}"
+echo -e "${GREEN}${BOLD}                Installation Complete! (TinyURL Sync)                 ${RESET}"
 echo -e "${GREEN}${BOLD}======================================================================${RESET}"
-echo -e "Permanent Worker URLs:"
-echo -e "  🔒 $(echo $USER1_NAME - VueTorrent): ${CYAN}${WORKER_URL}/$(echo $USER1_NAME | tr '[:upper:]' '[:lower:]')${RESET} (Browser: Firefox Nightly)"
-echo -e "  🌐 $(echo $USER2_NAME - Flood UI):  ${CYAN}${WORKER_URL}/$(echo $USER2_NAME | tr '[:upper:]' '[:lower:]')${RESET} (Browser: LibreWolf)"
+echo -e "Your Custom TinyURL Links:"
+echo -e "  🔒 $(echo $USER1_NAME - VueTorrent): ${CYAN}https://tinyurl.com/${ALIAS1}${RESET}"
+echo -e "  🌐 $(echo $USER2_NAME - Flood UI):  ${CYAN}https://tinyurl.com/${ALIAS2}${RESET}"
 echo ""
